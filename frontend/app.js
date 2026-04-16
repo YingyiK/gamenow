@@ -55,7 +55,9 @@ document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
   loadConfig();
   loadSession();
-  state.route = parseRoute(window.location.pathname);
+  // battleship.html 上，把路径规范化（去掉 .html 后缀再解析）
+  const rawPath = window.location.pathname.replace(/\/battleship\.html$/, "/battleship");
+  state.route = parseRoute(rawPath);
   renderAll();
   void onRouteChanged();
 });
@@ -172,7 +174,7 @@ function cacheElements() {
 }
 
 function bindEvents() {
-  els.brandButton.addEventListener("click", () => navigateTo("/"));
+  els.brandButton?.addEventListener("click", () => { location.href = "/"; });
   els.brandButton.addEventListener("dblclick", (event) => {
     event.preventDefault();
     openConfigPanel();
@@ -185,7 +187,7 @@ function bindEvents() {
     }
   });
 
-  els.homeContinueRoom.addEventListener("click", () => {
+  els.homeContinueRoom?.addEventListener("click", () => {
     if (state.session?.roomId) {
       navigateTo(roomPath(state.session.roomId));
     }
@@ -804,9 +806,16 @@ async function gomokuForfeit() {
 function connectSocket() {
   if (!isViewingLiveRoom() || !state.config.wsUrl) return;
 
+  // 已经连接中或已连接，跳过
+  if (state.ws && (state.ws.readyState === WebSocket.CONNECTING || state.ws.readyState === WebSocket.OPEN)) {
+    return;
+  }
+
+  // 关闭旧连接
   if (state.ws) {
     state.wsIntentionalClose = true;
     state.ws.close();
+    state.ws = null;
   }
 
   clearJoinTimeout();
@@ -843,7 +852,6 @@ function connectSocket() {
     setConnectionStatus("Disconnected");
     renderSessionSummary();
     if (!state.wsIntentionalClose && isViewingLiveRoom()) {
-      setStatus("WebSocket disconnected. Starting poll fallback.", true);
       startPolling();
     }
   });
@@ -1033,17 +1041,17 @@ function renderAll() {
 }
 
 function renderRoute() {
-  els.viewHome.classList.toggle("hidden", state.route.name !== "home");
-  els.viewBattleship.classList.toggle("hidden", state.route.name !== "battleship");
-  els.viewChess.classList.toggle("hidden", state.route.name !== "chess");
-  els.viewGomoku.classList.toggle("hidden", state.route.name !== "gomoku");
-  els.viewRoom.classList.toggle("hidden", state.route.name !== "room");
+  els.viewHome?.classList.toggle("hidden", state.route.name !== "home");
+  els.viewBattleship?.classList.toggle("hidden", state.route.name !== "battleship");
+  els.viewChess?.classList.toggle("hidden", state.route.name !== "chess");
+  els.viewGomoku?.classList.toggle("hidden", state.route.name !== "gomoku");
+  els.viewRoom?.classList.toggle("hidden", state.route.name !== "room");
 }
 
 function renderHome() {
   const canContinue = Boolean(state.session?.roomId);
-  els.homeContinueRoom.disabled = !canContinue;
-  els.homeContinueRoom.textContent = canContinue
+  if (els.homeContinueRoom) els.homeContinueRoom.disabled = !canContinue;
+  if (els.homeContinueRoom) els.homeContinueRoom.textContent = canContinue
     ? `Continue room ${state.session.roomId}`
     : "Continue Last Room";
 }
@@ -1731,9 +1739,15 @@ async function fireAt(row, col) {
 }
 
 function renderChat() {
-  if (els.chatLog) {
-    els.chatLog.innerHTML = "";
-  }
+  if (!els.chatLog) return;
+  els.chatLog.innerHTML = state.chat.map(m => {
+    const isMe = m.playerId === state.session?.playerId;
+    const name = isMe ? "You" : (state.room?.players?.find(p => p.playerId === m.playerId)?.playerName || "Opponent");
+    return `<div class="uno-chat-msg">
+      <span class="chat-name">${escapeHtml(name)}:</span>${escapeHtml(m.message)}
+    </div>`;
+  }).join("");
+  els.chatLog.scrollTop = els.chatLog.scrollHeight;
 }
 
 function renderPlacementSummary() {
