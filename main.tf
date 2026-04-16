@@ -88,6 +88,38 @@ resource "aws_s3_object" "frontend_logo" {
   content_type = "image/png"
 }
 
+resource "aws_s3_object" "frontend_uno_html" {
+  bucket       = aws_s3_bucket.frontend.id
+  key          = "uno.html"
+  source       = "${path.module}/frontend/uno.html"
+  etag         = filemd5("${path.module}/frontend/uno.html")
+  content_type = "text/html; charset=utf-8"
+}
+
+resource "aws_s3_object" "frontend_uno_js" {
+  bucket       = aws_s3_bucket.frontend.id
+  key          = "uno.js"
+  source       = "${path.module}/frontend/uno.js"
+  etag         = filemd5("${path.module}/frontend/uno.js")
+  content_type = "application/javascript"
+}
+
+resource "aws_cloudfront_function" "uno_rewrite" {
+  name    = "${var.project}-uno-rewrite"
+  runtime = "cloudfront-js-1.0"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+      var request = event.request;
+      var uri = request.uri;
+      if (!uri.match(/\.(js|css|png|ico|jpg|jpeg|gif|svg|woff|woff2)$/)) {
+        request.uri = '/uno.html';
+      }
+      return request;
+    }
+  EOT
+}
+
 resource "aws_cloudfront_origin_access_control" "frontend" {
   name                              = "${var.project}-frontend-oac"
   description                       = "OAC for GameNow frontend bucket"
@@ -126,6 +158,29 @@ resource "aws_cloudfront_distribution" "frontend" {
     default_ttl            = 300
     max_ttl                = 86400
     compress               = true
+  }
+
+  ordered_cache_behavior {
+    path_pattern     = "/uno*"
+    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "frontend-s3-origin"
+
+    forwarded_values {
+      query_string = false
+      cookies { forward = "none" }
+    }
+
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 0
+    default_ttl            = 300
+    max_ttl                = 86400
+    compress               = true
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.uno_rewrite.arn
+    }
   }
 
   # SPA fallback so /battleship/1234 refreshes to index.html.

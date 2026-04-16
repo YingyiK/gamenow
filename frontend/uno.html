@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UNO — GameNow</title>
+  <link rel="icon" type="image/png" href="/gamenow-logo.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/gamenow-logo.png">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    /* ── UNO colour tokens ───────────────────────────── */
+    :root {
+      --uno-red:    #e53935;
+      --uno-green:  #43a047;
+      --uno-blue:   #1e88e5;
+      --uno-yellow: #fdd835;
+      --uno-wild:   #212121;
+      --uno-red-dk:    #b71c1c;
+      --uno-green-dk:  #2e7d32;
+      --uno-blue-dk:   #1565c0;
+      --uno-yellow-dk: #f9a825;
+    }
+
+    /* ── Card component ──────────────────────────────── */
+    .uno-hand {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      padding: 16px 0;
+    }
+
+    .uno-card {
+      position: relative;
+      width: 64px;
+      height: 96px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      cursor: pointer;
+      border: 3px solid rgba(255,255,255,0.3);
+      transition: transform 0.15s, box-shadow 0.15s;
+      user-select: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      flex-shrink: 0;
+    }
+    .uno-card:hover:not(.disabled) { transform: translateY(-8px); box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
+    .uno-card.selected { transform: translateY(-12px); box-shadow: 0 10px 24px rgba(0,0,0,0.4); border-color: #fff; }
+    .uno-card.disabled { cursor: not-allowed; opacity: 0.5; }
+    .uno-card.c-Red    { background: var(--uno-red); }
+    .uno-card.c-Green  { background: var(--uno-green); }
+    .uno-card.c-Blue   { background: var(--uno-blue); }
+    .uno-card.c-Yellow { background: var(--uno-yellow); color: #333; }
+    .uno-card.c-Wild   { background: linear-gradient(135deg,var(--uno-red) 25%,var(--uno-yellow) 25% 50%,var(--uno-green) 50% 75%,var(--uno-blue) 75%); }
+    .uno-card .card-corner { position: absolute; font-size: 11px; font-weight: 700; line-height: 1; }
+    .uno-card .card-corner.tl { top: 5px; left: 7px; }
+    .uno-card .card-corner.br { bottom: 5px; right: 7px; transform: rotate(180deg); }
+    .uno-card .card-value { font-size: 24px; font-weight: 900; text-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+
+    /* ── Discard pile ────────────────────────────────── */
+    .uno-table {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 32px;
+      padding: 24px 0;
+    }
+    .uno-pile-label { font-size: 12px; color: var(--color-text-secondary, #888); margin-bottom: 6px; text-align: center; }
+    .uno-draw-pile {
+      width: 64px;
+      height: 96px;
+      border-radius: 10px;
+      background: #1a1a2e;
+      border: 3px dashed rgba(255,255,255,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 28px;
+      cursor: pointer;
+      transition: transform 0.15s;
+    }
+    .uno-draw-pile:hover:not(.disabled) { transform: translateY(-4px); }
+    .uno-draw-pile.disabled { cursor: not-allowed; opacity: 0.5; }
+    .draw-count-badge {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      background: rgba(0,0,0,0.5);
+      border-radius: 10px;
+      padding: 2px 8px;
+      margin-top: 4px;
+      text-align: center;
+    }
+
+    /* ── Direction indicator ─────────────────────────── */
+    .direction-indicator {
+      font-size: 24px;
+      transition: transform 0.3s;
+    }
+    .direction-indicator.ccw { transform: scaleX(-1); }
+
+    /* ── Current colour strip ────────────────────────── */
+    .current-color-strip {
+      height: 6px;
+      border-radius: 3px;
+      margin: 0 0 16px;
+      transition: background 0.3s;
+    }
+    .current-color-strip.c-Red    { background: var(--uno-red); }
+    .current-color-strip.c-Green  { background: var(--uno-green); }
+    .current-color-strip.c-Blue   { background: var(--uno-blue); }
+    .current-color-strip.c-Yellow { background: var(--uno-yellow); }
+    .current-color-strip.c-Wild   { background: #888; }
+
+    /* ── Opponent hand display ───────────────────────── */
+    .opponent-hand {
+      display: flex;
+      gap: 4px;
+      justify-content: center;
+      padding: 8px 0;
+    }
+    .opponent-card-back {
+      width: 32px;
+      height: 48px;
+      border-radius: 6px;
+      background: #1a1a2e;
+      border: 2px solid rgba(255,255,255,0.2);
+    }
+
+    /* ── Player seats strip ──────────────────────────── */
+    .uno-players {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+      padding: 12px 0;
+    }
+    .uno-player-chip {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 8px 16px;
+      border-radius: 12px;
+      border: 2px solid transparent;
+      background: var(--color-surface, #f5f5f5);
+      min-width: 80px;
+    }
+    .uno-player-chip.active {
+      border-color: #fdd835;
+      background: rgba(253,216,53,0.12);
+    }
+    .uno-player-chip.you { border-color: #1e88e5; }
+    .uno-player-chip .chip-name { font-size: 13px; font-weight: 600; }
+    .uno-player-chip .chip-count { font-size: 12px; color: var(--color-text-secondary, #888); }
+    .uno-chip-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 6px;
+      background: #e53935;
+      color: #fff;
+    }
+    .uno-chip-badge.uno-said { background: #fdd835; color: #333; }
+
+    /* ── Color picker modal ──────────────────────────── */
+    .color-picker-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+    }
+    .color-picker-card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px;
+      text-align: center;
+      max-width: 320px;
+      width: 90%;
+    }
+    .color-picker-card h3 { margin: 0 0 16px; font-size: 18px; }
+    .color-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .color-btn {
+      height: 64px;
+      border-radius: 12px;
+      border: none;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.1s;
+    }
+    .color-btn:hover { transform: scale(1.05); }
+    .color-btn.Red    { background: var(--uno-red); }
+    .color-btn.Green  { background: var(--uno-green); }
+    .color-btn.Blue   { background: var(--uno-blue); }
+    .color-btn.Yellow { background: var(--uno-yellow); color: #333; }
+
+    /* ── Pending draw banner ─────────────────────────── */
+    .pending-draw-banner {
+      background: #e53935;
+      color: #fff;
+      text-align: center;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+
+    /* ── Game summary ────────────────────────────────── */
+    .uno-winner-banner {
+      text-align: center;
+      padding: 24px;
+      font-size: 28px;
+      font-weight: 800;
+    }
+
+    /* ── Chat panel ──────────────────────────────────── */
+    .uno-chat-panel {
+      border-top: 1px solid var(--color-border, #eee);
+      margin-top: 16px;
+      padding-top: 12px;
+    }
+    .uno-chat-log {
+      height: 140px;
+      overflow-y: auto;
+      font-size: 13px;
+      padding: 8px;
+      background: var(--color-surface, #f9f9f9);
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    .uno-chat-msg { margin-bottom: 4px; }
+    .uno-chat-msg .chat-name { font-weight: 600; margin-right: 4px; }
+    .uno-chat-row { display: flex; gap: 8px; }
+    .uno-chat-row input { flex: 1; }
+
+    /* ── UNO button ──────────────────────────────────── */
+    .uno-shout-btn {
+      background: #e53935;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      width: 100px;
+      height: 44px;
+      font-size: 15px;
+      font-weight: 900;
+      cursor: pointer;
+      letter-spacing: 2px;
+      box-shadow: 0 4px 12px rgba(229,57,53,0.4);
+      transition: transform 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    } 
+    .uno-shout-btn:hover { transform: scale(1.1); }
+    .uno-shout-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Action row ──────────────────────────────────── */
+    .uno-action-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: center;
+      margin: 8px 0;
+    }
+
+    /* ── Misc layout ─────────────────────────────────── */
+    .uno-game-shell { max-width: 680px; margin: 0 auto; padding: 0 16px 40px; }
+    .turn-indicator {
+      text-align: center;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 6px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    .turn-indicator.your-turn { background: rgba(30,136,229,0.12); color: #1565c0; }
+    .turn-indicator.waiting   { color: var(--color-text-secondary, #888); }
+  </style>
+</head>
+<body>
+  <div class="site-shell">
+    <header class="site-header">
+      <button id="brand-button" class="brand-button" type="button" onclick="location.href='/'">
+        <span class="brand-mark" aria-hidden="true">
+          <img class="brand-logo-img" src="/gamenow-logo.png" alt="" width="40" height="48" decoding="async">
+        </span>
+        <span class="brand-copy"><strong>GameNow</strong></span>
+      </button>
+      <nav class="site-nav" aria-label="Game navigation">
+        <button class="nav-bar-btn" type="button" onclick="showView('lobby')">Lobby</button>
+        <button id="copy-link-btn" class="nav-bar-btn ghost hidden" type="button">Invite</button>
+      </nav>
+    </header>
+
+    <main>
+      <!-- ── LOBBY VIEW ── -->
+      <section id="view-lobby" class="view">
+        <div class="center-stage">
+          <div class="lobby-card">
+            <div class="lobby-title"><h1>UNO</h1></div>
+            <div class="lobby-stack">
+              <label class="field">
+                <span>Your name</span>
+                <input id="player-name-input" type="text" maxlength="24" placeholder="Enter your name">
+              </label>
+              <button id="create-room-btn" class="primary-button" type="button">Create Room</button>
+              <label class="field">
+                <span>Room code</span>
+                <input id="room-code-input" type="text" inputmode="numeric" maxlength="4" placeholder="e.g. 4821">
+              </label>
+              <button id="join-room-btn" class="soft-button" type="button">Join Room</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── ROOM / WAITING VIEW ── -->
+      <section id="view-room" class="view hidden">
+        <div class="room-page room-flow-page">
+          <div class="room-topbar minimal">
+            <div class="room-topbar-spacer"></div>
+            <div class="room-title-center">
+              <div class="room-title-copy">
+                <h1>UNO</h1>
+                <p id="room-code-display" class="room-code-line">Room code: ----</p>
+              </div>
+            </div>
+            <div class="room-topbar-flank room-topbar-flank--end">
+              <button id="leave-room-btn" class="ghost danger hidden" type="button">Leave</button>
+            </div>
+          </div>
+
+          <section id="seat-strip" class="seat-strip"></section>
+          <section id="room-meta" class="mode-strip"></section>
+
+          <section id="room-waiting-actions" class="room-waiting-actions hidden">
+            <div class="inline-actions centered-actions">
+              <button id="start-game-btn" type="button">Start Game</button>
+              <button id="leave-seat-btn" class="ghost danger" type="button">Leave Seat</button>
+            </div>
+          </section>
+
+          <section id="room-guest-panel" class="room-guest">
+            <div class="guest-card compact-entry">
+              <label class="field">
+                <span>Your name</span>
+                <input id="room-player-name-input" type="text" maxlength="24" placeholder="Enter your name">
+              </label>
+              <div class="inline-actions centered-actions">
+                <button id="join-current-room-btn" type="button">Join This Room</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ── GAME VIEW ── -->
+      <section id="view-game" class="view hidden">
+        <div class="uno-game-shell">
+          <!-- winner banner -->
+          <div id="winner-banner" class="uno-winner-banner hidden"></div>
+          <div id="restart-panel" class="hidden" style="text-align:center;margin-bottom:12px;">
+            <button id="restart-btn" type="button" class="primary-button">Play Again</button>
+          </div>
+
+          <!-- players strip -->
+          <div id="uno-players" class="uno-players"></div>
+
+          <!-- current colour strip -->
+          <div id="color-strip" class="current-color-strip c-Wild"></div>
+
+          <!-- turn indicator -->
+          <div id="turn-indicator" class="turn-indicator waiting">Waiting...</div>
+
+          <!-- pending draw banner -->
+          <div id="pending-banner" class="pending-draw-banner hidden"></div>
+
+          <!-- table: draw pile + top card -->
+          <div class="uno-table">
+            <div>
+              <div class="uno-pile-label">Draw pile</div>
+              <div id="draw-pile" class="uno-draw-pile" title="Draw a card">🂠</div>
+              <div id="draw-count" class="draw-count-badge">—</div>
+            </div>
+
+            <div class="direction-indicator" id="direction-indicator">🔄</div>
+
+            <div>
+              <div class="uno-pile-label">Discard</div>
+              <div id="top-card" class="uno-card" style="cursor:default"></div>
+            </div>
+          </div>
+
+          <!-- action row -->
+          <div class="uno-action-row">
+            <button id="uno-shout-btn" class="uno-shout-btn" disabled title="Shout UNO!">UNO!</button>
+            <button id="forfeit-btn" class="uno-shout-btn" style="background:#e53935;margin-left:12px;" type="button">END</button>
+          </div>
+
+          <!-- your hand -->
+          <div class="uno-pile-label" style="text-align:center;margin-top:8px">Your hand</div>
+          <div id="your-hand" class="uno-hand"></div>
+
+          <!-- chat -->
+          <div class="uno-chat-panel">
+            <div id="chat-log" class="uno-chat-log"></div>
+            <div class="uno-chat-row">
+              <input id="chat-input" type="text" maxlength="300" placeholder="Say something...">
+              <button id="send-chat-btn" class="ghost" type="button">Send</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <!-- colour picker modal -->
+  <div id="color-picker" class="color-picker-overlay hidden">
+    <div class="color-picker-card">
+      <h3>Choose a colour</h3>
+      <div class="color-grid">
+        <button class="color-btn Red"    data-color="Red">🔴 Red</button>
+        <button class="color-btn Green"  data-color="Green">🟢 Green</button>
+        <button class="color-btn Blue"   data-color="Blue">🔵 Blue</button>
+        <button class="color-btn Yellow" data-color="Yellow">🟡 Yellow</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/uno.js" defer></script>
+</body>
+</html>

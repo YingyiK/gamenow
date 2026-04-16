@@ -529,7 +529,17 @@ function connectSocket() {
     return;
   }
 
+  // 防止无限重连：已经在连接中则跳过
+  if (state.ws && state.ws.readyState === WebSocket.CONNECTING) {
+    return;
+  }
+
+  // 如果已经有连接正在关闭，等它关闭后再重连
   if (state.ws) {
+    if (state.ws.readyState === WebSocket.CLOSING) {
+      state.ws.addEventListener("close", () => connectSocket(), { once: true });
+      return;
+    }
     state.wsIntentionalClose = true;
     state.ws.close();
   }
@@ -568,7 +578,6 @@ function connectSocket() {
     setConnectionStatus("Disconnected");
     renderSessionSummary();
     if (!state.wsIntentionalClose && isViewingLiveRoom()) {
-      setStatus("WebSocket disconnected. Starting poll fallback.", true);
       startPolling();
     }
   });
