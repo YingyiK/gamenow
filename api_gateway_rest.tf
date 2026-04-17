@@ -73,24 +73,39 @@ resource "aws_api_gateway_integration_response" "options_rooms" {
   }
 }
 
-# /rooms/{roomId}
-resource "aws_api_gateway_resource" "room_id" {
+# /rooms/by-code/{gameType}/{numericRoomId}
+# Static "by-code" avoids API Gateway rule: only one variable path sibling under /rooms.
+# If AWS still has an orphan /rooms/{roomId} from an older deploy, remove it with:
+#   terraform output -raw rest_api_id | xargs -I{} python3 scripts/cleanup_legacy_room_ids.py apigw --rest-api-id {}
+resource "aws_api_gateway_resource" "rooms_by_code" {
   rest_api_id = aws_api_gateway_rest_api.rest.id
   parent_id   = aws_api_gateway_resource.rooms.id
-  path_part   = "{roomId}"
+  path_part   = "by-code"
 }
 
-# GET /rooms/{roomId}
+resource "aws_api_gateway_resource" "rooms_game_type" {
+  rest_api_id = aws_api_gateway_rest_api.rest.id
+  parent_id   = aws_api_gateway_resource.rooms_by_code.id
+  path_part   = "{gameType}"
+}
+
+resource "aws_api_gateway_resource" "rooms_numeric_id" {
+  rest_api_id = aws_api_gateway_rest_api.rest.id
+  parent_id   = aws_api_gateway_resource.rooms_game_type.id
+  path_part   = "{numericRoomId}"
+}
+
+# GET /rooms/by-code/{gameType}/{numericRoomId}
 resource "aws_api_gateway_method" "get_room" {
   rest_api_id   = aws_api_gateway_rest_api.rest.id
-  resource_id   = aws_api_gateway_resource.room_id.id
+  resource_id   = aws_api_gateway_resource.rooms_numeric_id.id
   http_method   = "GET"
   authorization = "NONE"
 }
 
 resource "aws_api_gateway_integration" "get_room" {
   rest_api_id             = aws_api_gateway_rest_api.rest.id
-  resource_id             = aws_api_gateway_resource.room_id.id
+  resource_id             = aws_api_gateway_resource.rooms_numeric_id.id
   http_method             = aws_api_gateway_method.get_room.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
@@ -99,14 +114,14 @@ resource "aws_api_gateway_integration" "get_room" {
 
 resource "aws_api_gateway_method" "options_room" {
   rest_api_id   = aws_api_gateway_rest_api.rest.id
-  resource_id   = aws_api_gateway_resource.room_id.id
+  resource_id   = aws_api_gateway_resource.rooms_numeric_id.id
   http_method   = "OPTIONS"
   authorization = "NONE"
 }
 
 resource "aws_api_gateway_integration" "options_room" {
   rest_api_id = aws_api_gateway_rest_api.rest.id
-  resource_id = aws_api_gateway_resource.room_id.id
+  resource_id = aws_api_gateway_resource.rooms_numeric_id.id
   http_method = aws_api_gateway_method.options_room.http_method
   type        = "MOCK"
 
@@ -117,7 +132,7 @@ resource "aws_api_gateway_integration" "options_room" {
 
 resource "aws_api_gateway_method_response" "options_room" {
   rest_api_id = aws_api_gateway_rest_api.rest.id
-  resource_id = aws_api_gateway_resource.room_id.id
+  resource_id = aws_api_gateway_resource.rooms_numeric_id.id
   http_method = aws_api_gateway_method.options_room.http_method
   status_code = "200"
 
@@ -130,7 +145,7 @@ resource "aws_api_gateway_method_response" "options_room" {
 
 resource "aws_api_gateway_integration_response" "options_room" {
   rest_api_id = aws_api_gateway_rest_api.rest.id
-  resource_id = aws_api_gateway_resource.room_id.id
+  resource_id = aws_api_gateway_resource.rooms_numeric_id.id
   http_method = aws_api_gateway_method.options_room.http_method
   status_code = aws_api_gateway_method_response.options_room.status_code
 
@@ -141,22 +156,22 @@ resource "aws_api_gateway_integration_response" "options_room" {
   }
 }
 
-# /rooms/{roomId}/join
+# /rooms/by-code/{gameType}/{numericRoomId}/join
 resource "aws_api_gateway_resource" "join" {
   rest_api_id = aws_api_gateway_rest_api.rest.id
-  parent_id   = aws_api_gateway_resource.room_id.id
+  parent_id   = aws_api_gateway_resource.rooms_numeric_id.id
   path_part   = "join"
 }
 
 resource "aws_api_gateway_resource" "leave" {
   rest_api_id = aws_api_gateway_rest_api.rest.id
-  parent_id   = aws_api_gateway_resource.room_id.id
+  parent_id   = aws_api_gateway_resource.rooms_numeric_id.id
   path_part   = "leave"
 }
 
 resource "aws_api_gateway_resource" "start" {
   rest_api_id = aws_api_gateway_rest_api.rest.id
-  parent_id   = aws_api_gateway_resource.room_id.id
+  parent_id   = aws_api_gateway_resource.rooms_numeric_id.id
   path_part   = "start"
 }
 
@@ -190,7 +205,7 @@ resource "aws_api_gateway_resource" "battleship_forfeit" {
   path_part   = "forfeit"
 }
 
-# POST /rooms/{roomId}/join
+# POST /rooms/by-code/{gameType}/{numericRoomId}/join
 resource "aws_api_gateway_method" "join_room" {
   rest_api_id   = aws_api_gateway_rest_api.rest.id
   resource_id   = aws_api_gateway_resource.join.id
@@ -650,6 +665,12 @@ resource "aws_api_gateway_resource" "chess_resign" {
   path_part   = "resign"
 }
 
+resource "aws_api_gateway_resource" "chess_forfeit" {
+  rest_api_id = aws_api_gateway_rest_api.rest.id
+  parent_id   = aws_api_gateway_resource.chess_room_id.id
+  path_part   = "forfeit"
+}
+
 # GET /chess/{roomId}
 resource "aws_api_gateway_method" "get_chess_state" {
   rest_api_id   = aws_api_gateway_rest_api.rest.id
@@ -923,6 +944,62 @@ resource "aws_api_gateway_integration_response" "options_chess_resign" {
   resource_id = aws_api_gateway_resource.chess_resign.id
   http_method = aws_api_gateway_method.options_chess_resign.http_method
   status_code = aws_api_gateway_method_response.options_chess_resign.status_code
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type'"
+    "method.response.header.Access-Control-Allow-Methods" = "'OPTIONS,POST'"
+    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
+  }
+}
+
+# POST /chess/{roomId}/forfeit
+resource "aws_api_gateway_method" "post_chess_forfeit" {
+  rest_api_id   = aws_api_gateway_rest_api.rest.id
+  resource_id   = aws_api_gateway_resource.chess_forfeit.id
+  http_method   = "POST"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "post_chess_forfeit" {
+  rest_api_id             = aws_api_gateway_rest_api.rest.id
+  resource_id             = aws_api_gateway_resource.chess_forfeit.id
+  http_method             = aws_api_gateway_method.post_chess_forfeit.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.chess_service.invoke_arn
+}
+
+resource "aws_api_gateway_method" "options_chess_forfeit" {
+  rest_api_id   = aws_api_gateway_rest_api.rest.id
+  resource_id   = aws_api_gateway_resource.chess_forfeit.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "options_chess_forfeit" {
+  rest_api_id = aws_api_gateway_rest_api.rest.id
+  resource_id = aws_api_gateway_resource.chess_forfeit.id
+  http_method = aws_api_gateway_method.options_chess_forfeit.http_method
+  type        = "MOCK"
+  request_templates = { "application/json" = "{\"statusCode\": 200}" }
+}
+
+resource "aws_api_gateway_method_response" "options_chess_forfeit" {
+  rest_api_id = aws_api_gateway_rest_api.rest.id
+  resource_id = aws_api_gateway_resource.chess_forfeit.id
+  http_method = aws_api_gateway_method.options_chess_forfeit.http_method
+  status_code = "200"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "options_chess_forfeit" {
+  rest_api_id = aws_api_gateway_rest_api.rest.id
+  resource_id = aws_api_gateway_resource.chess_forfeit.id
+  http_method = aws_api_gateway_method.options_chess_forfeit.http_method
+  status_code = aws_api_gateway_method_response.options_chess_forfeit.status_code
   response_parameters = {
     "method.response.header.Access-Control-Allow-Headers" = "'Content-Type'"
     "method.response.header.Access-Control-Allow-Methods" = "'OPTIONS,POST'"
@@ -1248,11 +1325,13 @@ resource "aws_api_gateway_deployment" "rest" {
       aws_api_gateway_integration.post_chess_move.id,
       aws_api_gateway_integration.post_chess_draw.id,
       aws_api_gateway_integration.post_chess_resign.id,
+      aws_api_gateway_integration.post_chess_forfeit.id,
       aws_api_gateway_integration_response.options_chess_room.id,
       aws_api_gateway_integration_response.options_chess_ready.id,
       aws_api_gateway_integration_response.options_chess_move.id,
       aws_api_gateway_integration_response.options_chess_draw.id,
       aws_api_gateway_integration_response.options_chess_resign.id,
+      aws_api_gateway_integration_response.options_chess_forfeit.id,
       aws_api_gateway_integration.get_gomoku_state.id,
       aws_api_gateway_integration.post_gomoku_ready.id,
       aws_api_gateway_integration.post_gomoku_place.id,
@@ -1292,11 +1371,13 @@ resource "aws_api_gateway_deployment" "rest" {
     aws_api_gateway_integration.post_chess_move,
     aws_api_gateway_integration.post_chess_draw,
     aws_api_gateway_integration.post_chess_resign,
+    aws_api_gateway_integration.post_chess_forfeit,
     aws_api_gateway_integration_response.options_chess_room,
     aws_api_gateway_integration_response.options_chess_ready,
     aws_api_gateway_integration_response.options_chess_move,
     aws_api_gateway_integration_response.options_chess_draw,
     aws_api_gateway_integration_response.options_chess_resign,
+    aws_api_gateway_integration_response.options_chess_forfeit,
     aws_api_gateway_integration.get_gomoku_state,
     aws_api_gateway_integration.post_gomoku_ready,
     aws_api_gateway_integration.post_gomoku_place,

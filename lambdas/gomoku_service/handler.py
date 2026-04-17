@@ -22,23 +22,41 @@ DRAW_RESULT = "DRAW"
 WAITING_ROOM_TTL_HOURS = 24
 
 
+def _storage_room_id(path_room_id):
+    if not path_room_id:
+        return path_room_id
+    if "#" in path_room_id:
+        return path_room_id
+    return f"gomoku#{path_room_id}"
+
+
+def _numeric_room_for_api(path_room_id, room):
+    if path_room_id and "#" not in path_room_id:
+        return path_room_id
+    rid = room.get("roomId")
+    if isinstance(rid, str) and "#" in rid:
+        return rid.split("#", 1)[1]
+    return rid
+
+
 def lambda_handler(event, context):
     http_method = event.get("httpMethod", "")
     path = event.get("path", "")
-    room_id = (event.get("pathParameters") or {}).get("roomId")
+    path_room_id = (event.get("pathParameters") or {}).get("roomId")
+    room_id = _storage_room_id(path_room_id)
 
     if http_method == "GET" and room_id:
-        return get_state(event, room_id)
+        return get_state(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/ready"):
-        return player_ready(event, room_id)
+        return player_ready(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/place"):
-        return place_stone(event, room_id)
+        return place_stone(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/forfeit"):
-        return forfeit_game(event, room_id)
+        return forfeit_game(event, room_id, path_room_id)
     return response(404, {"error": "Route not found"})
 
 
-def get_state(event, room_id):
+def get_state(event, room_id, path_room_id):
     query = event.get("queryStringParameters") or {}
     player_id = query.get("playerId")
     player_token = query.get("playerToken")
@@ -52,10 +70,21 @@ def get_state(event, room_id):
         return _error_response(str(exc))
 
     game = _prepare_game_state(_get_game_item(room_id), room)
-    return response(200, _viewer_state(game, room, player_id))
+    mutated = False
+    if _should_lazy_start_gomoku(room, game):
+        game = _mutate_game(room, lambda g: _force_start_gomoku_for_room(g, room))
+        mutated = True
+        room = _get_gomoku_room(room_id)
+    if game.get("phase") == "playing" and room.get("status") == "setup":
+        _mark_room_playing(room_id)
+        room = _get_gomoku_room(room_id)
+        mutated = True
+    if mutated:
+        _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def player_ready(event, room_id):
+def player_ready(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -74,11 +103,11 @@ def player_ready(event, room_id):
         _mark_room_playing(room_id)
         room = _get_gomoku_room(room_id)
 
-    _broadcast_game_state(game, room)
-    return response(200, _viewer_state(game, room, player_id))
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def place_stone(event, room_id):
+def place_stone(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -101,11 +130,11 @@ def place_stone(event, room_id):
         _mark_room_finished(room_id)
         room = _get_gomoku_room(room_id)
 
-    _broadcast_game_state(game, room)
-    return response(200, _viewer_state(game, room, player_id))
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def forfeit_game(event, room_id):
+def forfeit_game(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -123,7 +152,7 @@ def forfeit_game(event, room_id):
     _reset_room_to_waiting(room_id)
 
     _broadcast_room_event(room_id, {"type": "ROOM_UPDATED", "roomId": room_id, "status": "waiting"})
-    return response(200, {"status": "waiting", "roomId": room_id})
+    return response(200, {"status": "waiting", "roomId": path_room_id})
 
 
 def response(status_code, body):
@@ -147,6 +176,44 @@ def _error_response(message):
     return response(400, {"error": message})
 
 
+def _promote_gomoku_to_playing_if_all_ready(game, room):
+    player_ids = [p["playerId"] for p in room.get("players", [])]
+    if len(player_ids) < 2 or not all(game["players"].get(pid, {}).get("ready") for pid in player_ids):
+        return game
+    shuffled = player_ids[:]
+    random.shuffle(shuffled)
+    black_player = shuffled[0]
+    white_player = shuffled[1]
+    game["colorAssignment"] = {black_player: "black", white_player: "white"}
+    for pid in player_ids:
+        game["players"][pid]["color"] = game["colorAssignment"][pid]
+    game["playerOrder"] = [black_player, white_player]
+    game["currentTurnPlayerId"] = black_player
+    game["phase"] = "playing"
+    return game
+
+
+def _should_lazy_start_gomoku(room, game):
+    if room.get("status") not in ("setup", "playing"):
+        return False
+    if len(room.get("players", [])) < 2:
+        return False
+    return game.get("phase") == "waiting_for_players"
+
+
+def _force_start_gomoku_for_room(game, room):
+    if game["phase"] == "playing":
+        return game
+    if game["phase"] != "waiting_for_players":
+        return game
+    player_ids = [p["playerId"] for p in room.get("players", [])]
+    if len(player_ids) < 2:
+        return game
+    for pid in player_ids:
+        game["players"][pid]["ready"] = True
+    return _promote_gomoku_to_playing_if_all_ready(game, room)
+
+
 def _apply_ready(game, room, player_id):
     player_ids = [p["playerId"] for p in room.get("players", [])]
     if len(player_ids) < 2:
@@ -155,20 +222,7 @@ def _apply_ready(game, room, player_id):
         raise ValueError("Game is already in progress")
 
     game["players"][player_id]["ready"] = True
-
-    if all(game["players"].get(pid, {}).get("ready") for pid in player_ids):
-        shuffled = player_ids[:]
-        random.shuffle(shuffled)
-        black_player = shuffled[0]
-        white_player = shuffled[1]
-        game["colorAssignment"] = {black_player: "black", white_player: "white"}
-        for pid in player_ids:
-            game["players"][pid]["color"] = game["colorAssignment"][pid]
-        game["playerOrder"] = [black_player, white_player]
-        game["currentTurnPlayerId"] = black_player
-        game["phase"] = "playing"
-
-    return game
+    return _promote_gomoku_to_playing_if_all_ready(game, room)
 
 
 def _apply_place(game, player_id, row, col):
@@ -304,7 +358,7 @@ def _default_game_state(room):
     }
 
 
-def _viewer_state(game, room, viewer_player_id):
+def _viewer_state(game, room, viewer_player_id, path_room_id):
     color_assignment = game.get("colorAssignment", {})
     your_color = color_assignment.get(viewer_player_id)
     current_turn = game.get("currentTurnPlayerId")
@@ -312,7 +366,7 @@ def _viewer_state(game, room, viewer_player_id):
     my_player = game["players"].get(viewer_player_id, {})
 
     return {
-        "roomId": room["roomId"],
+        "roomId": _numeric_room_for_api(path_room_id, room),
         "gameType": "gomoku",
         "phase": game.get("phase", "waiting_for_players"),
         "board": [[int(cell) if cell else 0 for cell in row] for row in game.get("board", [])],
@@ -339,14 +393,14 @@ def _viewer_state(game, room, viewer_player_id):
     }
 
 
-def _broadcast_game_state(game, room):
+def _broadcast_game_state(game, room, path_room_id):
     for connection in _get_room_connection_records(room["roomId"]):
         player_id = connection.get("playerId")
         if not player_id or player_id not in game.get("players", {}):
             continue
         payload = json.dumps({
             "type": "GAME_STATE",
-            "state": _viewer_state(game, room, player_id),
+            "state": _viewer_state(game, room, player_id, path_room_id),
         }, default=_json_default).encode()
         try:
             apigw.post_to_connection(ConnectionId=connection["connectionId"], Data=payload)

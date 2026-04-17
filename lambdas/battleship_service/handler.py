@@ -26,23 +26,42 @@ STANDARD_FLEET = [
 FLEET_BY_NAME = {ship["name"]: ship["size"] for ship in STANDARD_FLEET}
 
 
+def _storage_room_id(path_room_id):
+    """URL uses /battleship/7089; DynamoDB rooms + game rows use battleship#7089."""
+    if not path_room_id:
+        return path_room_id
+    if "#" in path_room_id:
+        return path_room_id
+    return f"battleship#{path_room_id}"
+
+
+def _numeric_room_for_api(path_room_id, room):
+    if path_room_id and "#" not in path_room_id:
+        return path_room_id
+    rid = room.get("roomId")
+    if isinstance(rid, str) and "#" in rid:
+        return rid.split("#", 1)[1]
+    return rid
+
+
 def lambda_handler(event, context):
     http_method = event.get("httpMethod", "")
     path = event.get("path", "")
-    room_id = (event.get("pathParameters") or {}).get("roomId")
+    path_room_id = (event.get("pathParameters") or {}).get("roomId")
+    room_id = _storage_room_id(path_room_id)
 
-    if http_method == "GET" and room_id and path == f"/battleship/{room_id}":
-        return get_state(event, room_id)
+    if http_method == "GET" and room_id and path == f"/battleship/{path_room_id}":
+        return get_state(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/setup"):
-        return setup_ships(event, room_id)
+        return setup_ships(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/fire"):
-        return fire_shot(event, room_id)
+        return fire_shot(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/forfeit"):
-        return forfeit_game(event, room_id)
+        return forfeit_game(event, room_id, path_room_id)
     return response(404, {"error": "Route not found"})
 
 
-def get_state(event, room_id):
+def get_state(event, room_id, path_room_id):
     query = event.get("queryStringParameters") or {}
     player_id = query.get("playerId")
     player_token = query.get("playerToken")
@@ -56,10 +75,10 @@ def get_state(event, room_id):
         return _error_response(str(exc))
 
     game = _prepare_game_state(_get_game_item(room_id), room)
-    return response(200, _viewer_state(game, room, player_id))
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def setup_ships(event, room_id):
+def setup_ships(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -83,11 +102,11 @@ def setup_ships(event, room_id):
         room = _get_battleship_room(room_id)
         game = _prepare_game_state(game, room)
 
-    _broadcast_game_state(game, room)
-    return response(200, _viewer_state(game, room, player_id))
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def fire_shot(event, room_id):
+def fire_shot(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -111,11 +130,11 @@ def fire_shot(event, room_id):
         room = _get_battleship_room(room_id)
         game = _prepare_game_state(game, room)
 
-    _broadcast_game_state(game, room)
-    return response(200, _viewer_state(game, room, player_id))
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def forfeit_game(event, room_id):
+def forfeit_game(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -140,7 +159,7 @@ def forfeit_game(event, room_id):
         "status": "waiting",
     })
 
-    return response(200, {"status": "waiting", "roomId": room_id})
+    return response(200, {"status": "waiting", "roomId": path_room_id})
 
 
 def response(status_code, body):
@@ -379,14 +398,14 @@ def _normalize_player_state(state):
     return state
 
 
-def _viewer_state(game, room, viewer_player_id):
+def _viewer_state(game, room, viewer_player_id, path_room_id):
     own_state = game["players"].get(viewer_player_id, _empty_player_state())
     opponent_player_id = _opponent_player_id(game, viewer_player_id)
     opponent_state = game["players"].get(opponent_player_id, _empty_player_state()) if opponent_player_id else _empty_player_state()
     your_shot = game.get("currentRoundShots", {}).get(viewer_player_id)
 
     return {
-        "roomId": room["roomId"],
+        "roomId": _numeric_room_for_api(path_room_id, room),
         "gameType": "battleship",
         "phase": game["phase"],
         "roundNumber": game["roundNumber"],
@@ -448,7 +467,7 @@ def _public_ship(ship):
     }
 
 
-def _broadcast_game_state(game, room):
+def _broadcast_game_state(game, room, path_room_id):
     for connection in _get_room_connection_records(room["roomId"]):
         player_id = connection.get("playerId")
         if not player_id or player_id not in game.get("players", {}):
@@ -456,7 +475,7 @@ def _broadcast_game_state(game, room):
 
         payload = json.dumps({
             "type": "GAME_STATE",
-            "state": _viewer_state(game, room, player_id),
+            "state": _viewer_state(game, room, player_id, path_room_id),
         }, default=_json_default).encode()
         try:
             apigw.post_to_connection(ConnectionId=connection["connectionId"], Data=payload)

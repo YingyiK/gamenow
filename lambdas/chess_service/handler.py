@@ -20,25 +20,45 @@ INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 DRAW_RESULT = "DRAW"
 
 
+def _storage_room_id(path_room_id):
+    if not path_room_id:
+        return path_room_id
+    if "#" in path_room_id:
+        return path_room_id
+    return f"chess#{path_room_id}"
+
+
+def _numeric_room_for_api(path_room_id, room):
+    if path_room_id and "#" not in path_room_id:
+        return path_room_id
+    rid = room.get("roomId")
+    if isinstance(rid, str) and "#" in rid:
+        return rid.split("#", 1)[1]
+    return rid
+
+
 def lambda_handler(event, context):
     http_method = event.get("httpMethod", "")
     path = event.get("path", "")
-    room_id = (event.get("pathParameters") or {}).get("roomId")
+    path_room_id = (event.get("pathParameters") or {}).get("roomId")
+    room_id = _storage_room_id(path_room_id)
 
     if http_method == "GET" and room_id:
-        return get_state(event, room_id)
+        return get_state(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/ready"):
-        return player_ready(event, room_id)
+        return player_ready(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/move"):
-        return make_move(event, room_id)
+        return make_move(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/draw"):
-        return handle_draw(event, room_id)
+        return handle_draw(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/resign"):
-        return resign(event, room_id)
+        return resign(event, room_id, path_room_id)
+    if http_method == "POST" and room_id and path.endswith("/forfeit"):
+        return forfeit_game(event, room_id, path_room_id)
     return response(404, {"error": "Route not found"})
 
 
-def get_state(event, room_id):
+def get_state(event, room_id, path_room_id):
     query = event.get("queryStringParameters") or {}
     player_id = query.get("playerId")
     player_token = query.get("playerToken")
@@ -52,10 +72,21 @@ def get_state(event, room_id):
         return _error_response(str(exc))
 
     game = _prepare_game_state(_get_game_item(room_id), room)
-    return response(200, _viewer_state(game, room, player_id))
+    mutated = False
+    if _should_lazy_start_chess(room, game):
+        game = _mutate_game(room, lambda g: _force_start_chess_for_room(g, room))
+        mutated = True
+        room = _get_chess_room(room_id)
+    if game.get("phase") == "playing" and room.get("status") == "setup":
+        _mark_room_playing(room_id)
+        room = _get_chess_room(room_id)
+        mutated = True
+    if mutated:
+        _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def player_ready(event, room_id):
+def player_ready(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -74,11 +105,11 @@ def player_ready(event, room_id):
         _mark_room_playing(room_id)
         room = _get_chess_room(room_id)
 
-    _broadcast_game_state(game, room)
-    return response(200, _viewer_state(game, room, player_id))
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def make_move(event, room_id):
+def make_move(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -102,11 +133,11 @@ def make_move(event, room_id):
         _mark_room_finished(room_id)
         room = _get_chess_room(room_id)
 
-    _broadcast_game_state(game, room)
-    return response(200, _viewer_state(game, room, player_id))
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def handle_draw(event, room_id):
+def handle_draw(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -128,11 +159,11 @@ def handle_draw(event, room_id):
         _mark_room_finished(room_id)
         room = _get_chess_room(room_id)
 
-    _broadcast_game_state(game, room)
-    return response(200, _viewer_state(game, room, player_id))
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def resign(event, room_id):
+def resign(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -149,8 +180,38 @@ def resign(event, room_id):
 
     _mark_room_finished(room_id)
     room = _get_chess_room(room_id)
-    _broadcast_game_state(game, room)
-    return response(200, {"roomId": room_id, "winnerPlayerId": game["winnerPlayerId"], "phase": "finished"})
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, {"roomId": path_room_id, "winnerPlayerId": game["winnerPlayerId"], "phase": "finished"})
+
+
+def forfeit_game(event, room_id, path_room_id):
+    """Clear a finished match and return the room to waiting (lobby), like other games' forfeit."""
+    body = json.loads(event.get("body") or "{}")
+    player_id = body.get("playerId")
+    player_token = body.get("playerToken")
+
+    if not player_id or not player_token:
+        return response(400, {"error": "playerId and playerToken are required"})
+
+    try:
+        room = _get_chess_room(room_id)
+        _require_room_player(room, player_id, player_token)
+    except ValueError as exc:
+        return _error_response(str(exc))
+
+    existing = _get_game_item(room_id)
+    if existing and existing.get("phase") != "finished":
+        return response(400, {"error": "Finish or resign the game before leaving the match"})
+
+    dynamodb.Table(CHESS_TABLE).delete_item(Key={"roomId": room_id})
+    _reset_room_to_waiting(room_id)
+
+    _broadcast_room_event(room_id, {
+        "type": "ROOM_UPDATED",
+        "roomId": room_id,
+        "status": "waiting",
+    })
+    return response(200, {"status": "waiting", "roomId": path_room_id})
 
 
 def response(status_code, body):
@@ -174,23 +235,47 @@ def _error_response(message):
     return response(400, {"error": message})
 
 
+def _promote_chess_to_playing_if_all_ready(game, room):
+    player_ids = [p["playerId"] for p in room.get("players", [])]
+    if len(player_ids) < 2 or not all(game["players"].get(pid, {}).get("ready") for pid in player_ids):
+        return game
+    shuffled = player_ids[:]
+    random.shuffle(shuffled)
+    game["colorAssignment"] = {shuffled[0]: "white", shuffled[1]: "black"}
+    for pid in player_ids:
+        game["players"][pid]["color"] = game["colorAssignment"][pid]
+    game["playerOrder"] = [shuffled[0], shuffled[1]]
+    game["phase"] = "playing"
+    return game
+
+
+def _should_lazy_start_chess(room, game):
+    if room.get("status") not in ("setup", "playing"):
+        return False
+    if len(room.get("players", [])) < 2:
+        return False
+    return game.get("phase") in ("waiting_for_players", "setup")
+
+
+def _force_start_chess_for_room(game, room):
+    if game["phase"] == "playing":
+        return game
+    if game["phase"] not in ("waiting_for_players", "setup"):
+        return game
+    player_ids = [p["playerId"] for p in room.get("players", [])]
+    if len(player_ids) < 2:
+        return game
+    for pid in player_ids:
+        game["players"][pid]["ready"] = True
+    return _promote_chess_to_playing_if_all_ready(game, room)
+
+
 def _apply_ready(game, room, player_id):
     if game["phase"] not in ("waiting_for_players", "setup"):
         raise ValueError("Game is not in setup phase")
 
     game["players"][player_id]["ready"] = True
-
-    player_ids = [p["playerId"] for p in room.get("players", [])]
-    if len(player_ids) >= 2 and all(game["players"].get(pid, {}).get("ready") for pid in player_ids):
-        shuffled = player_ids[:]
-        random.shuffle(shuffled)
-        game["colorAssignment"] = {shuffled[0]: "white", shuffled[1]: "black"}
-        for pid in player_ids:
-            game["players"][pid]["color"] = game["colorAssignment"][pid]
-        game["playerOrder"] = [shuffled[0], shuffled[1]]
-        game["phase"] = "playing"
-
-    return game
+    return _promote_chess_to_playing_if_all_ready(game, room)
 
 
 def _apply_move(game, player_id, from_sq, to_sq, promotion):
@@ -386,7 +471,7 @@ def _default_game_state(room):
     }
 
 
-def _viewer_state(game, room, viewer_player_id):
+def _viewer_state(game, room, viewer_player_id, path_room_id):
     color_assignment = game.get("colorAssignment", {})
     your_color = color_assignment.get(viewer_player_id)
 
@@ -400,7 +485,7 @@ def _viewer_state(game, room, viewer_player_id):
     draw_offered_by = game.get("drawOfferedBy")
 
     return {
-        "roomId": room["roomId"],
+        "roomId": _numeric_room_for_api(path_room_id, room),
         "gameType": "chess",
         "phase": game.get("phase", "waiting_for_players"),
         "fen": game.get("fen", INITIAL_FEN),
@@ -427,19 +512,30 @@ def _viewer_state(game, room, viewer_player_id):
     }
 
 
-def _broadcast_game_state(game, room):
+def _broadcast_game_state(game, room, path_room_id):
     for connection in _get_room_connection_records(room["roomId"]):
         player_id = connection.get("playerId")
         if not player_id or player_id not in game.get("players", {}):
             continue
         payload = json.dumps({
             "type": "GAME_STATE",
-            "state": _viewer_state(game, room, player_id),
+            "state": _viewer_state(game, room, player_id, path_room_id),
         }, default=_json_default).encode()
         try:
             apigw.post_to_connection(ConnectionId=connection["connectionId"], Data=payload)
         except apigw.exceptions.GoneException:
             dynamodb.Table(CONNECTIONS_TABLE).delete_item(Key={"connectionId": connection["connectionId"]})
+
+
+def _broadcast_room_event(room_id, message):
+    payload = json.dumps(message, default=_json_default).encode()
+    for connection in _get_room_connection_records(room_id):
+        try:
+            apigw.post_to_connection(ConnectionId=connection["connectionId"], Data=payload)
+        except apigw.exceptions.GoneException:
+            dynamodb.Table(CONNECTIONS_TABLE).delete_item(Key={"connectionId": connection["connectionId"]})
+        except Exception:
+            pass
 
 
 def _get_chess_room(room_id):
@@ -501,6 +597,16 @@ def _mark_room_finished(room_id):
         UpdateExpression="SET #status = :finished, updatedAt = :updatedAt",
         ExpressionAttributeNames={"#status": "status"},
         ExpressionAttributeValues={":finished": "finished", ":updatedAt": _now()},
+    )
+
+
+def _reset_room_to_waiting(room_id):
+    ttl = int(datetime.now(timezone.utc).timestamp()) + 86400
+    dynamodb.Table(ROOMS_TABLE).update_item(
+        Key={"roomId": room_id},
+        UpdateExpression="SET #status = :waiting, updatedAt = :updatedAt, expiresAt = :ttl",
+        ExpressionAttributeNames={"#status": "status"},
+        ExpressionAttributeValues={":waiting": "waiting", ":updatedAt": _now(), ":ttl": ttl},
     )
 
 

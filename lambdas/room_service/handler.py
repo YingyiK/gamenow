@@ -23,22 +23,24 @@ apigw = boto3.client("apigatewaymanagementapi", endpoint_url=WS_ENDPOINT)
 
 def lambda_handler(event, context):
     http_method = event.get("httpMethod", "")
-    path = event.get("path", "")
+    resource = (event.get("resource") or "").strip()
+    pp = event.get("pathParameters") or {}
 
-    if http_method == "POST" and path == "/rooms":
+    if http_method == "POST" and resource == "/rooms":
         return create_room(event)
-    if http_method == "GET" and path.startswith("/rooms/"):
-        room_id = event["pathParameters"]["roomId"]
-        return get_room(room_id)
-    if http_method == "POST" and path.endswith("/start"):
-        room_id = event["pathParameters"]["roomId"]
-        return start_room(event, room_id)
-    if http_method == "POST" and path.endswith("/join"):
-        room_id = event["pathParameters"]["roomId"]
-        return join_room(event, room_id)
-    if http_method == "POST" and path.endswith("/leave"):
-        room_id = event["pathParameters"]["roomId"]
-        return leave_room(event, room_id)
+
+    storage_id = _storage_room_id_from_path_params(pp)
+    if storage_id is None and (pp.get("gameType") or pp.get("numericRoomId")):
+        return response(400, {"error": "Invalid gameType or room code"})
+
+    if http_method == "GET" and resource == "/rooms/by-code/{gameType}/{numericRoomId}" and storage_id:
+        return get_room(storage_id)
+    if http_method == "POST" and resource == "/rooms/by-code/{gameType}/{numericRoomId}/start" and storage_id:
+        return start_room(event, storage_id)
+    if http_method == "POST" and resource == "/rooms/by-code/{gameType}/{numericRoomId}/join" and storage_id:
+        return join_room(event, storage_id)
+    if http_method == "POST" and resource == "/rooms/by-code/{gameType}/{numericRoomId}/leave" and storage_id:
+        return leave_room(event, storage_id)
     return response(404, {"error": "Route not found"})
 
 
@@ -51,16 +53,44 @@ def create_room(event):
     if game_type not in ("uno", "battleship", "chess", "gomoku"):
         return response(400, {"error": "gameType must be uno, battleship, chess, or gomoku"})
 
+    raw_rid = body.get("roomId")
+    if raw_rid is not None and raw_rid != "":
+        requested = _optional_room_id_from_body(raw_rid)
+        if requested is None:
+            return response(400, {"error": "roomId must be a 4-digit number between 1000 and 9999"})
+    else:
+        requested = None
+
     table = dynamodb.Table(ROOMS_TABLE)
     player = _new_player(player_name)
     now = _now()
 
+    if requested is not None:
+        storage_id = _compose_storage_room_id(game_type, requested)
+        item = {
+            "roomId": storage_id,
+            "gameType": game_type,
+            "status": "waiting",
+            "players": [player],
+            "createdAt": now,
+            "updatedAt": now,
+            "expiresAt": _waiting_room_expires_at(),
+        }
+        try:
+            table.put_item(Item=item, ConditionExpression="attribute_not_exists(roomId)")
+            return response(201, _session_response(storage_id, player, game_type, "waiting", player["playerId"]))
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return response(409, {"error": "Room already exists"})
+            raise
+
     for _ in range(ROOM_ID_ATTEMPTS):
         room_id = _generate_room_id()
+        storage_id = _compose_storage_room_id(game_type, room_id)
         try:
             table.put_item(
                 Item={
-                    "roomId": room_id,
+                    "roomId": storage_id,
                     "gameType": game_type,
                     "status": "waiting",
                     "players": [player],
@@ -70,7 +100,7 @@ def create_room(event):
                 },
                 ConditionExpression="attribute_not_exists(roomId)",
             )
-            return response(201, _session_response(room_id, player, game_type, "waiting", player["playerId"]))
+            return response(201, _session_response(storage_id, player, game_type, "waiting", player["playerId"]))
         except ClientError as exc:
             if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
                 raise
@@ -305,6 +335,37 @@ def _validate_player_name(player_name):
     if not player_name:
         return None
     return player_name[:24]
+
+
+def _compose_storage_room_id(game_type, numeric_room_id):
+    """DynamoDB partition key: battleship#7089 (per-game room numbers)."""
+    return f"{game_type}#{numeric_room_id}"
+
+
+def _storage_room_id_from_path_params(pp):
+    game_type = pp.get("gameType")
+    numeric = pp.get("numericRoomId")
+    if not game_type or not numeric:
+        return None
+    padded = _optional_room_id_from_body(numeric)
+    if padded is None or game_type not in ("uno", "battleship", "chess", "gomoku"):
+        return None
+    return _compose_storage_room_id(game_type, padded)
+
+
+def _optional_room_id_from_body(raw):
+    """If client requests a fixed 4-digit room id (1000–9999), return zero-padded str; else None."""
+    if raw is None or raw is False:
+        return None
+    if isinstance(raw, bool):
+        return None
+    s = str(raw).strip()
+    if not s.isdigit():
+        return None
+    n = int(s)
+    if n < ROOM_ID_MIN or n > ROOM_ID_MAX:
+        return None
+    return f"{n:04d}"
 
 
 def _generate_room_id():

@@ -117,7 +117,7 @@
           </section>
 
           <section id="room-live-panel" class="room-live-shell hidden">
-            <button id="end-game-btn" class="end-game-btn hidden" type="button" title="End game">End</button>
+            <button id="end-game-btn" class="end-game-btn hidden" type="button" title="Resign or end match">End</button>
 
             <section id="chess-game" class="battle-stage compact">
               <article class="panel battle-summary compact-summary">
@@ -145,23 +145,6 @@
                     <button data-promo="r" type="button" class="promo-btn">♖ Rook</button>
                     <button data-promo="b" type="button" class="promo-btn">♗ Bishop</button>
                     <button data-promo="n" type="button" class="promo-btn">♘ Knight</button>
-                  </div>
-                </article>
-                <article class="panel chess-sidebar hidden" id="chess-sidebar-panel">
-                  <div id="chess-ready-section" class="hidden">
-                    <p class="placement-hint">Colors are assigned randomly. Game starts automatically.</p>
-                  </div>
-                  <div id="chess-play-section" class="hidden">
-                    <div id="chess-color-label" class="chess-color-label"></div>
-                    <div class="inline-actions centered-actions" style="margin-top:12px">
-                      <button id="chess-resign-btn" class="ghost danger" type="button">Resign</button>
-                    </div>
-                  </div>
-                  <div id="chess-finished-section" class="hidden" style="text-align:center">
-                    <div id="chess-result-label" class="stage-summary-line" style="font-size:24px;font-weight:700;margin-bottom:16px"></div>
-                    <div class="inline-actions centered-actions">
-                      <button id="chess-leave-btn" class="primary-button" type="button">Leave Game</button>
-                    </div>
                   </div>
                 </article>
               </div>
@@ -214,6 +197,7 @@
     </div>
   </aside>
 
+  <script src="/game-shared.js"></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

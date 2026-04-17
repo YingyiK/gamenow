@@ -72,6 +72,14 @@ resource "aws_s3_object" "frontend_app" {
   content_type = "application/javascript"
 }
 
+resource "aws_s3_object" "frontend_game_shared" {
+  bucket       = aws_s3_bucket.frontend.id
+  key          = "game-shared.js"
+  source       = "${path.module}/frontend/game-shared.js"
+  etag         = filemd5("${path.module}/frontend/game-shared.js")
+  content_type = "application/javascript"
+}
+
 resource "aws_s3_object" "frontend_styles" {
   bucket       = aws_s3_bucket.frontend.id
   key          = "styles.css"
@@ -352,6 +360,7 @@ resource "aws_cloudfront_distribution" "frontend" {
   depends_on = [
     aws_s3_object.frontend_index,
     aws_s3_object.frontend_app,
+    aws_s3_object.frontend_game_shared,
     aws_s3_object.frontend_styles,
   ]
 

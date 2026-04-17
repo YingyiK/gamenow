@@ -3,6 +3,11 @@ output "rest_api_url" {
   value       = "${aws_api_gateway_stage.rest.invoke_url}"
 }
 
+output "rest_api_id" {
+  description = "REST API Gateway id (for scripts/cleanup_legacy_room_ids.py apigw)"
+  value       = aws_api_gateway_rest_api.rest.id
+}
+
 output "websocket_url" {
   description = "WebSocket URL — share with teammates and frontend"
   value       = "${aws_apigatewayv2_stage.websocket.invoke_url}"

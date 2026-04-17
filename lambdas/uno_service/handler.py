@@ -50,23 +50,41 @@ def _str_card(s):
 # Lambda entry point
 # ---------------------------------------------------------------------------
 
+def _storage_room_id(path_room_id):
+    if not path_room_id:
+        return path_room_id
+    if "#" in path_room_id:
+        return path_room_id
+    return f"uno#{path_room_id}"
+
+
+def _numeric_room_for_api(path_room_id, room):
+    if path_room_id and "#" not in path_room_id:
+        return path_room_id
+    rid = room.get("roomId")
+    if isinstance(rid, str) and "#" in rid:
+        return rid.split("#", 1)[1]
+    return rid
+
+
 def lambda_handler(event, context):
     http_method = event.get("httpMethod", "")
     path = event.get("path", "")
-    room_id = (event.get("pathParameters") or {}).get("roomId")
+    path_room_id = (event.get("pathParameters") or {}).get("roomId")
+    room_id = _storage_room_id(path_room_id)
 
-    if http_method == "GET" and room_id and path == f"/uno/{room_id}":
-        return get_state(event, room_id)
+    if http_method == "GET" and room_id and path == f"/uno/{path_room_id}":
+        return get_state(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/start"):
-        return start_game(event, room_id)
+        return start_game(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/play"):
-        return play_card(event, room_id)
+        return play_card(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/draw"):
-        return draw_card(event, room_id)
+        return draw_card(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/uno"):
-        return say_uno(event, room_id)
+        return say_uno(event, room_id, path_room_id)
     if http_method == "POST" and room_id and path.endswith("/forfeit"):
-        return forfeit_game(event, room_id)
+        return forfeit_game(event, room_id, path_room_id)
     return response(404, {"error": "Route not found"})
 
 
@@ -74,7 +92,7 @@ def lambda_handler(event, context):
 # Route handlers
 # ---------------------------------------------------------------------------
 
-def get_state(event, room_id):
+def get_state(event, room_id, path_room_id):
     query = event.get("queryStringParameters") or {}
     player_id = query.get("playerId")
     player_token = query.get("playerToken")
@@ -88,10 +106,10 @@ def get_state(event, room_id):
         return _error_response(str(exc))
 
     game = _prepare_game_state(_get_game_item(room_id), room)
-    return response(200, _viewer_state(game, room, player_id))
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def start_game(event, room_id):
+def start_game(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -114,11 +132,11 @@ def start_game(event, room_id):
     _mark_room_playing(room_id)
     room = _get_uno_room(room_id)
     game = _prepare_game_state(game, room)
-    _broadcast_game_state(game, room)
-    return response(200, _viewer_state(game, room, player_id))
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def play_card(event, room_id):
+def play_card(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -145,11 +163,11 @@ def play_card(event, room_id):
         room = _get_uno_room(room_id)
         game = _prepare_game_state(game, room)
 
-    _broadcast_game_state(game, room)
-    return response(200, _viewer_state(game, room, player_id))
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def draw_card(event, room_id):
+def draw_card(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -164,11 +182,11 @@ def draw_card(event, room_id):
     except ValueError as exc:
         return _error_response(str(exc))
 
-    _broadcast_game_state(game, room)
-    return response(200, _viewer_state(game, room, player_id))
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def say_uno(event, room_id):
+def say_uno(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -183,11 +201,11 @@ def say_uno(event, room_id):
     except ValueError as exc:
         return _error_response(str(exc))
 
-    _broadcast_game_state(game, room)
-    return response(200, _viewer_state(game, room, player_id))
+    _broadcast_game_state(game, room, path_room_id)
+    return response(200, _viewer_state(game, room, player_id, path_room_id))
 
 
-def forfeit_game(event, room_id):
+def forfeit_game(event, room_id, path_room_id):
     body = json.loads(event.get("body") or "{}")
     player_id = body.get("playerId")
     player_token = body.get("playerToken")
@@ -210,7 +228,7 @@ def forfeit_game(event, room_id):
         "roomId": room_id,
         "status": "waiting",
     })
-    return response(200, {"roomId": room_id, "status": "waiting"})
+    return response(200, {"roomId": path_room_id, "status": "waiting"})
 
 
 # ---------------------------------------------------------------------------
@@ -510,13 +528,13 @@ def _normalize_player_state(state):
 # Viewer state (hides other players' hands)
 # ---------------------------------------------------------------------------
 
-def _viewer_state(game, room, viewer_player_id):
+def _viewer_state(game, room, viewer_player_id, path_room_id):
     player_order = game.get("playerOrder", [])
     current_pid = player_order[game["currentPlayerIndex"]] if player_order else None
     top_card = game["discardPile"][-1] if game["discardPile"] else None
 
     return {
-        "roomId": room["roomId"],
+        "roomId": _numeric_room_for_api(path_room_id, room),
         "gameType": "uno",
         "phase": game["phase"],
         "winnerPlayerId": game.get("winnerPlayerId"),
@@ -565,14 +583,14 @@ def _viewer_state(game, room, viewer_player_id):
 # Broadcast helpers (identical pattern to A's code)
 # ---------------------------------------------------------------------------
 
-def _broadcast_game_state(game, room):
+def _broadcast_game_state(game, room, path_room_id):
     for connection in _get_room_connection_records(room["roomId"]):
         pid = connection.get("playerId")
         if not pid or pid not in game.get("players", {}):
             continue
         payload = json.dumps({
             "type": "GAME_STATE",
-            "state": _viewer_state(game, room, pid),
+            "state": _viewer_state(game, room, pid, path_room_id),
         }, default=_json_default).encode()
         try:
             apigw.post_to_connection(ConnectionId=connection["connectionId"], Data=payload)

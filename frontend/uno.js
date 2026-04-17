@@ -1,12 +1,28 @@
 /* ─────────────────────────────────────────────────────────────
    UNO Frontend — uno.js
+   Shared string/emoji/localStorage helpers: /game-shared.js (load first).
+
+   File map (top → bottom):
+     Constants & state → URL helpers → Boot
+     Views → Session → Events → Room actions → Game actions
+     Data fetch (REST) → WebSocket → Render (lobby / room / game)
+     Card helpers → Utils (api, toast, requireName)
    ───────────────────────────────────────────────────────────── */
+
+const {
+  readJson,
+  escapeHtml: esc,
+  firstEmoji,
+  stripLeadingEmoji: stripEmoji,
+  pickRandomAnimalEmoji,
+  numericRoomCode,
+  compositeRoomId,
+} = window.GameNowCommon;
 
 const REST_URL = "https://9tnuo0hn4k.execute-api.us-west-2.amazonaws.com/prod";
 const WS_URL   = "wss://dzhq6f9ar8.execute-api.us-west-2.amazonaws.com/prod";
 const SESSION_KEY = "gamenowUnoSession";
 const PROFILE_KEY = "gamenowUnoProfileName";
-const ANIMAL_EMOJIS = ["🐱","🐶","🐼","🐯","🦊","🐻","🐨","🐸","🐵","🐧","🦁","🐰"];
 
 const state = {
   session: null,
@@ -21,20 +37,43 @@ const state = {
   pendingWildCard: null,
 };
 
+/* ── URL ↔ room id (guest vs live; mirrors app route + isViewingLiveRoom) ─── */
+
+function getUnoRoomIdFromPath() {
+  const m = window.location.pathname.match(/\/uno\/(\d{4})/);
+  return m ? m[1] : null;
+}
+
+function roomsApiPath(gameType, numericRoomId) {
+  return `/rooms/by-code/${gameType}/${numericRoomId}`;
+}
+
+/** Session exists and matches the room id in the current URL (same idea as app.js isViewingLiveRoom). */
+function isLiveUnoRoom() {
+  const id = getUnoRoomIdFromPath();
+  return Boolean(state.session && id && numericRoomCode(state.session.roomId) === String(id));
+}
+
 /* ── Boot ──────────────────────────────────────────────────── */
 document.addEventListener("DOMContentLoaded", () => {
   loadSession();
   bindEvents();
-  const match = window.location.pathname.match(/\/uno\/(\d{4})/);
-  if (match) {
-    document.getElementById("room-code-input").value = match[1];
-    if (state.session?.roomId === match[1]) {
-      restoreSession();
+  const pathRoomId = getUnoRoomIdFromPath();
+  if (pathRoomId) {
+    const input = document.getElementById("room-code-input");
+    if (input) input.value = pathRoomId;
+    if (isLiveUnoRoom()) {
+      void restoreSession();
     } else {
-      fetchPublicRoom(match[1]).then(() => { showView("room"); renderRoom(); });
+      disconnectSocket();
+      state.room = null;
+      state.game = null;
+      state.chat = [];
+      state.roomJoined = false;
+      void fetchPublicRoom(pathRoomId).then(() => renderAll());
     }
   } else {
-    showView("lobby");
+    renderAll();
   }
 });
 
@@ -52,8 +91,16 @@ function showView(name) {
 
 /* ── Session ───────────────────────────────────────────────── */
 function loadSession() {
-  state.session = readJson(SESSION_KEY);
-  state.profileName = localStorage.getItem(PROFILE_KEY) || state.session?.playerName || randomName();
+  const session = readJson(SESSION_KEY);
+  if (session?.roomId != null) {
+    const rid = String(session.roomId);
+    if (/^\d{4}$/.test(rid)) {
+      session.roomId = compositeRoomId("uno", rid);
+      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    }
+  }
+  state.session = session;
+  state.profileName = localStorage.getItem(PROFILE_KEY) || state.session?.playerName || pickRandomAnimalEmoji();
   syncNameInputs(state.profileName);
 }
 
@@ -128,7 +175,7 @@ async function createRoom() {
     const playerName = requireName();
     const room = await api("/rooms", { method: "POST", body: { gameType: "uno", playerName } });
     setSession(room);
-    history.pushState({}, "", "/uno/" + room.roomId);
+    history.pushState({}, "", "/uno/" + numericRoomCode(room.roomId));
     document.getElementById("copy-link-btn").classList.remove("hidden");
     await restoreSession();
   } catch (e) { toast(e.message, true); }
@@ -136,20 +183,43 @@ async function createRoom() {
 
 async function joinRoomByCode(roomId) {
   try {
-    if (state.session?.roomId === roomId) { await restoreSession(); return; }
+    if (numericRoomCode(state.session?.roomId) === roomId) {
+      await restoreSession();
+      return;
+    }
     const playerName = requireName();
-    const room = await api("/rooms/" + roomId + "/join", { method: "POST", body: { playerName } });
+    const roomBase = roomsApiPath("uno", roomId);
+    let room;
+    try {
+      room = await api(roomBase + "/join", { method: "POST", body: { playerName } });
+    } catch (joinErr) {
+      if (!/room not found/i.test(String(joinErr.message || ""))) {
+        toast(joinErr.message, true);
+        return;
+      }
+      try {
+        room = await api("/rooms", { method: "POST", body: { gameType: "uno", playerName, roomId } });
+      } catch (createErr) {
+        if (!/already exists/i.test(String(createErr.message || ""))) {
+          toast(createErr.message, true);
+          return;
+        }
+        room = await api(roomBase + "/join", { method: "POST", body: { playerName } });
+      }
+    }
     setSession(room);
-    history.pushState({}, "", "/uno/" + room.roomId);
+    history.pushState({}, "", "/uno/" + numericRoomCode(room.roomId));
     document.getElementById("copy-link-btn").classList.remove("hidden");
     await restoreSession();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) {
+    toast(e.message, true);
+  }
 }
 
 async function leaveRoom() {
   if (!state.session) return;
   try {
-    await api("/rooms/" + state.session.roomId + "/leave", {
+    await api(roomsApiPath("uno", numericRoomCode(state.session.roomId)) + "/leave", {
       method: "POST",
       body: { playerId: state.session.playerId, playerToken: state.session.playerToken },
     });
@@ -157,13 +227,13 @@ async function leaveRoom() {
   clearSession();
   history.pushState({}, "", "/uno");
   document.getElementById("copy-link-btn").classList.add("hidden");
-  showView("lobby");
+  renderAll();
 }
 
 async function startRoom() {
   if (!state.session) return;
   try {
-    await api("/uno/" + state.session.roomId + "/start", {
+    await api("/uno/" + numericRoomCode(state.session.roomId) + "/start", {
       method: "POST",
       body: { playerId: state.session.playerId, playerToken: state.session.playerToken },
     });
@@ -200,7 +270,7 @@ async function playCard(cardStr) {
 async function submitPlayCard(cardStr, chosenColor) {
   state.selectedCard = null;
   try {
-    const data = await api("/uno/" + state.session.roomId + "/play", {
+    const data = await api("/uno/" + numericRoomCode(state.session.roomId) + "/play", {
       method: "POST",
       body: {
         playerId: state.session.playerId,
@@ -217,7 +287,7 @@ async function submitPlayCard(cardStr, chosenColor) {
 async function drawCard() {
   if (!state.session || !state.game?.isYourTurn) return;
   try {
-    const data = await api("/uno/" + state.session.roomId + "/draw", {
+    const data = await api("/uno/" + numericRoomCode(state.session.roomId) + "/draw", {
       method: "POST",
       body: { playerId: state.session.playerId, playerToken: state.session.playerToken },
     });
@@ -229,7 +299,7 @@ async function drawCard() {
 async function shoutUno() {
   if (!state.session) return;
   try {
-    const data = await api("/uno/" + state.session.roomId + "/uno", {
+    const data = await api("/uno/" + numericRoomCode(state.session.roomId) + "/uno", {
       method: "POST",
       body: { playerId: state.session.playerId, playerToken: state.session.playerToken },
     });
@@ -240,9 +310,9 @@ async function shoutUno() {
 }
 
 async function forfeit() {
-  if (!state.session || !confirm("End this game and return to lobby?")) return;
+  if (!state.session || !confirm("End this game and return to room?")) return;
   try {
-    await api("/uno/" + state.session.roomId + "/forfeit", {
+    await api("/uno/" + numericRoomCode(state.session.roomId) + "/forfeit", {
       method: "POST",
       body: { playerId: state.session.playerId, playerToken: state.session.playerToken },
     });
@@ -254,7 +324,7 @@ async function forfeit() {
 async function restartGame() {
   if (!state.session) return;
   try {
-    await api("/uno/" + state.session.roomId + "/start", {
+    await api("/uno/" + numericRoomCode(state.session.roomId) + "/start", {
       method: "POST",
       body: { playerId: state.session.playerId, playerToken: state.session.playerToken },
     });
@@ -280,7 +350,10 @@ async function copyLink() {
 
 /* ── Data fetch ────────────────────────────────────────────── */
 async function refreshAll() {
-  if (!state.session) return;
+  if (!state.session) {
+    renderAll();
+    return;
+  }
   try {
     await fetchRoom();
     if (state.room?.status === "playing" || state.room?.status === "finished") {
@@ -291,19 +364,21 @@ async function refreshAll() {
 }
 
 async function fetchRoom() {
-  state.room = await api("/rooms/" + state.session.roomId);
+  state.room = await api(roomsApiPath("uno", numericRoomCode(state.session.roomId)));
   state.session.hostPlayerId = state.room.hostPlayerId;
   persistSession();
 }
 
 async function fetchPublicRoom(roomId) {
-  try { state.room = await api("/rooms/" + roomId); } catch (_) {}
+  try {
+    state.room = await api(roomsApiPath("uno", roomId));
+  } catch (_) {}
 }
 
 async function fetchGame() {
   if (!state.session) return;
   const q = new URLSearchParams({ playerId: state.session.playerId, playerToken: state.session.playerToken });
-  state.game = await api("/uno/" + state.session.roomId + "?" + q.toString());
+  state.game = await api("/uno/" + numericRoomCode(state.session.roomId) + "?" + q.toString());
 }
 
 /* ── WebSocket ─────────────────────────────────────────────── */
@@ -385,18 +460,41 @@ function sendWs(payload) {
 
 /* ── Render ────────────────────────────────────────────────── */
 function renderAll() {
-  if (!state.session) { showView("lobby"); return; }
+  const pathRoomId = getUnoRoomIdFromPath();
+
+  if (!state.session) {
+    if (pathRoomId && state.room) {
+      showView("room");
+      renderRoom();
+      return;
+    }
+    showView("lobby");
+    return;
+  }
+
+  if (!isLiveUnoRoom()) {
+    if (pathRoomId && state.room) {
+      showView("room");
+      renderRoom();
+      return;
+    }
+    showView("lobby");
+    return;
+  }
+
   const status = state.room?.status;
   if (status === "playing" || status === "finished") {
-    showView("game"); renderGame();
+    showView("game");
+    renderGame();
   } else {
-    showView("room"); renderRoom();
+    showView("room");
+    renderRoom();
   }
 }
 
 function renderRoom() {
   const room = state.room;
-  const roomId = state.session?.roomId || (window.location.pathname.match(/\/uno\/(\d{4})/) || [])[1] || "----";
+  const roomId = getUnoRoomIdFromPath() || numericRoomCode(state.session?.roomId) || "----";
   document.getElementById("room-code-display").textContent = "Room code: " + roomId;
   document.getElementById("copy-link-btn").classList.toggle("hidden", !state.session);
   document.getElementById("leave-room-btn").classList.toggle("hidden", !state.session);
@@ -627,28 +725,7 @@ function toast(msg, isError = false) {
 function requireName() {
   const name = state.profileName.trim();
   if (name) return name.slice(0, 24);
-  const fallback = randomName();
+  const fallback = pickRandomAnimalEmoji();
   syncNameInputs(fallback);
   return fallback;
-}
-
-function randomName() {
-  return ANIMAL_EMOJIS[Math.floor(Math.random() * ANIMAL_EMOJIS.length)];
-}
-
-function readJson(key) {
-  try { return JSON.parse(localStorage.getItem(key)); } catch (_) { return null; }
-}
-
-function esc(v) {
-  return String(v || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-}
-
-function firstEmoji(v) {
-  const m = String(v || "").trim().match(/^\p{Extended_Pictographic}/u);
-  return m ? m[0] : "";
-}
-
-function stripEmoji(v) {
-  return String(v || "").trim().replace(/^\p{Extended_Pictographic}\s*/u, "");
 }

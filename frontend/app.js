@@ -1,3 +1,15 @@
+/**
+ * Battleship + Chess + Gomoku SPA (room routes, lobby, WebSocket).
+ * Depends on /game-shared.js (load first).
+ *
+ * File map (top → bottom; order matches runtime, not dependency):
+ *   Constants & state → Boot → DOM cache/bind → Config & profile
+ *   Routing & navigation → Rooms API (create/join/leave/start/kick)
+ *   Reconnect (restoreSession) → REST sync (refreshAll / fetch*)
+ *   Per-game POST actions (chess / gomoku) → WebSocket + polling + chat
+ *   Session write (set/clear) → Render orchestration → Per-game render
+ *   Battleship placement & boards → Shared state helpers → HTTP utils
+ */
 const FLEET = [
   { name: "carrier", size: 5 },
   { name: "battleship", size: 4 },
@@ -10,7 +22,6 @@ const SESSION_KEY = "gamenowGameSession";
 const OLD_SESSION_KEY = "gamenowBattleshipSession";
 const CONFIG_KEY = "gamenowBattleshipConfig";
 const PROFILE_KEY = "gamenowBattleshipProfileName";
-const ANIMAL_EMOJIS = ["🐱", "🐶", "🐼", "🐯", "🦊", "🐻", "🐨", "🐸", "🐵", "🐧", "🦁", "🐰"];
 
 const DEFAULT_API_CONFIG = {
   restUrl: "https://9tnuo0hn4k.execute-api.us-west-2.amazonaws.com/prod",
@@ -21,6 +32,17 @@ const CHESS_PIECES = {
   K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙",
   k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟",
 };
+
+const {
+  readJson,
+  normalizeBaseUrl,
+  escapeHtml,
+  firstEmoji,
+  stripLeadingEmoji,
+  pickRandomAnimalEmoji,
+  numericRoomCode,
+  compositeRoomId,
+} = window.GameNowCommon;
 
 const state = {
   config: {
@@ -50,6 +72,8 @@ const state = {
 
 const els = {};
 
+// ── Boot ─────────────────────────────────────────────────────────────────────
+
 document.addEventListener("DOMContentLoaded", () => {
   cacheElements();
   bindEvents();
@@ -63,6 +87,8 @@ document.addEventListener("DOMContentLoaded", () => {
   renderAll();
   void onRouteChanged();
 });
+
+// ── DOM: cache elements + event bindings ─────────────────────────────────────
 
 function cacheElements() {
   [
@@ -139,18 +165,10 @@ function cacheElements() {
     "chess-game-summary",
     "chess-board",
     "chess-board-panel",
-    "chess-sidebar-panel",
     "chess-promotion-bar",
-    "chess-ready-section",
-    "chess-play-section",
-    "chess-color-label",
     "chess-draw-offer-banner",
     "chess-accept-draw",
     "chess-decline-draw",
-    "chess-finished-section",
-    "chess-result-label",
-    "chess-leave-btn",
-    "chess-resign-btn",
     "gomoku-game",
     "gomoku-status-title",
     "gomoku-round-pill",
@@ -159,8 +177,6 @@ function cacheElements() {
     "gomoku-board-panel",
     "gomoku-sidebar-panel",
     "gomoku-chat-panel",
-    "gomoku-ready-section",
-    "gomoku-ready-btn",
     "gomoku-play-section",
     "gomoku-color-label",
     "gomoku-move-list",
@@ -265,7 +281,7 @@ function bindEvents() {
   els.copyRoomLink?.addEventListener("click", copyRoomLink);
   els.refreshRoom?.addEventListener("click", refreshAll);
   els.leaveRoom?.addEventListener("click", leaveRoom);
-  els.endGameBtn?.addEventListener("click", forfeitGame);
+  els.endGameBtn?.addEventListener("click", () => void handleEndGameBtnClick());
   els.startGame?.addEventListener("click", startRoom);
   els.leaveSeat?.addEventListener("click", leaveRoom);
 
@@ -283,8 +299,6 @@ function bindEvents() {
   // Chess game
   els.chessAcceptDraw?.addEventListener("click", () => void chessDraw("accept"));
   els.chessDeclineDraw?.addEventListener("click", () => void chessDraw("decline"));
-  els.chessLeaveBtn?.addEventListener("click", leaveRoom);
-  els.chessResignBtn?.addEventListener("click", () => void chessResign());
   els.chessPromotionBar?.querySelectorAll("[data-promo]").forEach((btn) => {
     btn.addEventListener("click", () => {
       if (state.promotionPending) {
@@ -296,7 +310,6 @@ function bindEvents() {
   });
 
   // Gomoku game
-  els.gomokuReadyBtn?.addEventListener("click", gomokuReady);
   els.gomokuForfeitBtn?.addEventListener("click", gomokuForfeit);
 
   els.saveConfig?.addEventListener("click", saveConfig);
@@ -310,6 +323,8 @@ function bindEvents() {
     void onRouteChanged();
   });
 }
+
+// ── Config & profile (localStorage) ─────────────────────────────────────────
 
 function handleGlobalKeydown(event) {
   if (event.key === "Escape" && state.configOpen) {
@@ -338,6 +353,13 @@ function loadSession() {
   if (!session) {
     session = readJson(OLD_SESSION_KEY);
     if (session) session.gameType = "battleship";
+  }
+  if (session?.roomId != null && session.gameType) {
+    const rid = String(session.roomId);
+    if (/^\d{4}$/.test(rid)) {
+      session.roomId = compositeRoomId(session.gameType, rid);
+      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    }
   }
   state.session = session;
   state.profileName = localStorage.getItem(PROFILE_KEY) || state.session?.playerName || generateDefaultPlayerName();
@@ -383,6 +405,8 @@ function persistSession() {
   }
 }
 
+// ── Routing & navigation ─────────────────────────────────────────────────────
+
 function parseRoute(pathname) {
   const segments = pathname.replace(/\/+$/, "").split("/").filter(Boolean);
   if (segments.length === 0) return { name: "home" };
@@ -398,12 +422,28 @@ function parseRoute(pathname) {
   return { name: "home" };
 }
 
+function roomsApiPath(gameType, numericRoomId) {
+  return `/rooms/by-code/${gameType}/${numericRoomId}`;
+}
+
+function sessionMatchesRoomRoute(session, route) {
+  return Boolean(
+    session &&
+    route?.name === "room" &&
+    session.gameType === route.gameType &&
+    numericRoomCode(session.roomId) === String(route.roomId),
+  );
+}
+
 function currentGameType() {
-  if (state.session?.gameType) return state.session.gameType;
-  if (state.route?.gameType) return state.route.gameType;
-  if (state.route?.name === "chess" || state.route?.name === "gomoku" || state.route?.name === "battleship") {
-    return state.route.name;
+  const name = state.route?.name;
+  if (name === "battleship" || name === "chess" || name === "gomoku") {
+    return name;
   }
+  if (name === "room" && state.route?.gameType) {
+    return state.route.gameType;
+  }
+  if (state.session?.gameType) return state.session.gameType;
   return "battleship";
 }
 
@@ -434,7 +474,7 @@ async function onRouteChanged() {
     els.lobbyRoomIdInput.value = state.route.roomId;
   }
 
-  if (state.session?.roomId === state.route.roomId && state.config.restUrl && state.config.wsUrl) {
+  if (sessionMatchesRoomRoute(state.session, state.route) && state.config.restUrl && state.config.wsUrl) {
     await restoreSession();
     return;
   }
@@ -452,6 +492,16 @@ async function onRouteChanged() {
   renderAll();
 }
 
+// ── Rooms API: create / join / leave / start / kick ───────────────────────────
+
+function isRoomNotFoundApiError(error) {
+  return /room not found/i.test(String(error?.message || ""));
+}
+
+function isRoomAlreadyExistsApiError(error) {
+  return /already exists/i.test(String(error?.message || ""));
+}
+
 async function createBattleshipRoom() {
   try {
     ensureConfigured();
@@ -463,7 +513,7 @@ async function createBattleshipRoom() {
     setSession(room, "battleship");
     navigateTo(roomPath(room.roomId, "battleship"));
     await restoreSession();
-    setStatus(`Room ${room.roomId} created. Share the link with your friend.`);
+    setStatus(`Room ${numericRoomCode(room.roomId)} created. Share the link with your friend.`);
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -481,7 +531,7 @@ async function createChessRoom() {
     setSession(room, "chess");
     navigateTo(roomPath(room.roomId, "chess"));
     await restoreSession();
-    setStatus(`Room ${room.roomId} created. Share the link with your friend.`);
+    setStatus(`Room ${numericRoomCode(room.roomId)} created. Share the link with your friend.`);
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -499,7 +549,7 @@ async function createGomokuRoom() {
     setSession(room, "gomoku");
     navigateTo(roomPath(room.roomId, "gomoku"));
     await restoreSession();
-    setStatus(`Room ${room.roomId} created. Share the link with your friend.`);
+    setStatus(`Room ${numericRoomCode(room.roomId)} created. Share the link with your friend.`);
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -508,26 +558,56 @@ async function createGomokuRoom() {
 async function joinRoomByCode(roomId) {
   try {
     ensureConfigured();
+    const gameType = currentGameType();
     if (hasSavedSessionForRoom(roomId)) {
-      if (state.route?.name !== "room" || state.route.roomId !== roomId) {
-        navigateTo(roomPath(roomId));
+      if (state.route?.name !== "room" || state.route.roomId !== roomId || state.route.gameType !== gameType) {
+        navigateTo(roomPath(roomId, gameType));
       }
       await restoreSession();
       setStatus(`Restored your seat in room ${roomId}.`);
       return;
     }
     const playerName = requirePlayerName();
-    const room = await apiRequest(`/rooms/${roomId}/join`, {
-      method: "POST",
-      body: { playerName },
-    });
-    setSession(room, room.gameType || "battleship");
-    const targetPath = roomPath(room.roomId, room.gameType || "battleship");
-    if (state.route?.name !== "room" || state.route.roomId !== room.roomId) {
+    const roomBase = roomsApiPath(gameType, roomId);
+    let room;
+    try {
+      room = await apiRequest(`${roomBase}/join`, {
+        method: "POST",
+        body: { playerName },
+      });
+    } catch (joinError) {
+      if (!isRoomNotFoundApiError(joinError)) {
+        setStatus(joinError.message, true);
+        return;
+      }
+      try {
+        room = await apiRequest("/rooms", {
+          method: "POST",
+          body: { gameType, playerName, roomId },
+        });
+      } catch (createError) {
+        if (!isRoomAlreadyExistsApiError(createError)) {
+          setStatus(createError.message, true);
+          return;
+        }
+        room = await apiRequest(`${roomBase}/join`, {
+          method: "POST",
+          body: { playerName },
+        });
+      }
+    }
+    setSession(room, room.gameType || gameType);
+    const targetPath = roomPath(room.roomId, room.gameType || gameType);
+    const gt = room.gameType || gameType;
+    if (
+      state.route?.name !== "room" ||
+      state.route.roomId !== numericRoomCode(room.roomId) ||
+      state.route.gameType !== gt
+    ) {
       navigateTo(targetPath);
     }
     await restoreSession();
-    setStatus(`Joined room ${room.roomId}.`);
+    setStatus(`Joined room ${numericRoomCode(room.roomId)}.`);
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -540,7 +620,7 @@ async function leaveRoom() {
   }
 
   try {
-    await apiRequest(`/rooms/${state.session.roomId}/leave`, {
+    await apiRequest(`${roomsApiPath(state.session.gameType, numericRoomCode(state.session.roomId))}/leave`, {
       method: "POST",
       body: {
         playerId: state.session.playerId,
@@ -566,7 +646,7 @@ async function startRoom() {
   }
 
   try {
-    await apiRequest(`/rooms/${state.session.roomId}/start`, {
+    await apiRequest(`${roomsApiPath(state.session.gameType, numericRoomCode(state.session.roomId))}/start`, {
       method: "POST",
       body: {
         playerId: state.session.playerId,
@@ -580,15 +660,29 @@ async function startRoom() {
   }
 }
 
+async function handleEndGameBtnClick() {
+  if (!state.session) return;
+  const gt = currentGameType();
+  if (gt === "chess" && state.game?.phase === "finished") {
+    await chessForfeit();
+    return;
+  }
+  if (gt === "chess" && (state.game?.phase === "playing" || state.game?.phase === "setup")) {
+    await chessResign();
+    return;
+  }
+  await forfeitGame();
+}
+
 async function forfeitGame() {
   if (!state.session) return;
-
+  if (!confirm("End this game and return to room?")) return;
 
   const gameType = currentGameType();
-  const endpoint = gameType === "chess" ? "resign" : "forfeit";
+  if (gameType === "chess") return;
 
   try {
-    await apiRequest(`/${gameType}/${state.session.roomId}/${endpoint}`, {
+    await apiRequest(`/${gameType}/${numericRoomCode(state.session.roomId)}/forfeit`, {
       method: "POST",
       body: {
         playerId: state.session.playerId,
@@ -609,7 +703,7 @@ async function kickPlayer(targetPlayerId) {
   if (!state.session) return;
 
   try {
-    await apiRequest(`/rooms/${state.session.roomId}/leave`, {
+    await apiRequest(`${roomsApiPath(state.session.gameType, numericRoomCode(state.session.roomId))}/leave`, {
       method: "POST",
       body: {
         playerId: state.session.playerId,
@@ -624,8 +718,10 @@ async function kickPlayer(targetPlayerId) {
   }
 }
 
+// ── Reconnect: restoreSession (then refresh + WebSocket) ─────────────────────
+
 async function restoreSession() {
-  if (!state.session || state.route?.name !== "room" || state.route.roomId !== state.session.roomId) {
+  if (!state.session || !sessionMatchesRoomRoute(state.session, state.route)) {
     return;
   }
 
@@ -634,6 +730,8 @@ async function restoreSession() {
   await refreshAll();
   connectSocket();
 }
+
+// ── REST sync: refreshAll, fetchRoom, fetchPublicRoom, fetchGame ─────────────
 
 async function refreshAll() {
   if (!isRoomRoute()) {
@@ -644,20 +742,8 @@ async function refreshAll() {
   try {
     if (isViewingLiveRoom()) {
       await fetchRoom();
-      if (currentGameType() === "chess" && isHostPlayer() && hasAllPlayers() && isWaitingRoomStage()) {
-        await startRoom();
-        renderAll();
-        return;
-      }
       if (!isWaitingRoomStage()) {
         await fetchGame();
-        if (currentGameType() === "gomoku" && state.game?.phase === "waiting_for_players" && !state.game?.yourReady) {
-          void gomokuReady();
-        }
-        if (currentGameType() === "chess" && (state.game?.phase === "waiting_for_players" || state.game?.phase === "setup")) {
-          const myReady = state.game?.players?.find((p) => p.playerId === state.session?.playerId)?.ready;
-          if (!myReady) void chessReady();
-        }
       }
     } else if (state.route?.roomId) {
       await fetchPublicRoom(state.route.roomId);
@@ -669,7 +755,7 @@ async function refreshAll() {
 }
 
 async function fetchRoom() {
-  const room = await apiRequest(`/rooms/${state.session.roomId}`);
+  const room = await apiRequest(roomsApiPath(state.session.gameType, numericRoomCode(state.session.roomId)));
   state.room = room;
 
   const me = room.players.find((player) => player.playerId === state.session.playerId);
@@ -688,7 +774,8 @@ async function fetchPublicRoom(roomId) {
   if (!roomId) return;
 
   try {
-    state.room = await apiRequest(`/rooms/${roomId}`);
+    const gt = state.route?.gameType || currentGameType();
+    state.room = await apiRequest(roomsApiPath(gt, roomId));
   } catch (error) {
     state.room = null;
     throw error;
@@ -702,28 +789,17 @@ async function fetchGame() {
     playerId: state.session.playerId,
     playerToken: state.session.playerToken,
   });
-  state.game = await apiRequest(`/${gameType}/${state.session.roomId}?${query.toString()}`);
+  state.game = await apiRequest(
+    `/${gameType}/${numericRoomCode(state.session.roomId)}?${query.toString()}`,
+  );
 }
 
 // ── Chess actions ────────────────────────────────────────────────────────────
 
-async function chessReady() {
-  if (!state.session) return;
-  try {
-    state.game = await apiRequest(`/chess/${state.session.roomId}/ready`, {
-      method: "POST",
-      body: { playerId: state.session.playerId, playerToken: state.session.playerToken },
-    });
-    renderAll();
-  } catch (error) {
-    setStatus(error.message, true);
-  }
-}
-
 async function chessMove(from, to, promotion) {
   if (!state.session) return;
   try {
-    state.game = await apiRequest(`/chess/${state.session.roomId}/move`, {
+    state.game = await apiRequest(`/chess/${numericRoomCode(state.session.roomId)}/move`, {
       method: "POST",
       body: {
         playerId: state.session.playerId,
@@ -745,7 +821,7 @@ async function chessMove(from, to, promotion) {
 async function chessDraw(action) {
   if (!state.session) return;
   try {
-    state.game = await apiRequest(`/chess/${state.session.roomId}/draw`, {
+    state.game = await apiRequest(`/chess/${numericRoomCode(state.session.roomId)}/draw`, {
       method: "POST",
       body: { playerId: state.session.playerId, playerToken: state.session.playerToken, action },
     });
@@ -759,7 +835,7 @@ async function chessResign() {
   if (!state.session) return;
 
   try {
-    await apiRequest(`/chess/${state.session.roomId}/resign`, {
+    await apiRequest(`/chess/${numericRoomCode(state.session.roomId)}/resign`, {
       method: "POST",
       body: { playerId: state.session.playerId, playerToken: state.session.playerToken },
     });
@@ -770,28 +846,30 @@ async function chessResign() {
   }
 }
 
-// ── Gomoku actions ───────────────────────────────────────────────────────────
-
-async function gomokuReady() {
+async function chessForfeit() {
   if (!state.session) return;
+
   try {
-    state.game = await apiRequest(`/gomoku/${state.session.roomId}/ready`, {
+    await apiRequest(`/chess/${numericRoomCode(state.session.roomId)}/forfeit`, {
       method: "POST",
       body: { playerId: state.session.playerId, playerToken: state.session.playerToken },
     });
-    if (state.game.phase === "playing") {
-      await fetchRoom();
-    }
-    renderAll();
+    state.game = null;
+    state.chessSelected = null;
+    state.promotionPending = null;
+    await refreshAll();
+    setStatus("Game ended. Room is back to the lobby.");
   } catch (error) {
     setStatus(error.message, true);
   }
 }
 
+// ── Gomoku actions ───────────────────────────────────────────────────────────
+
 async function gomokuPlace(row, col) {
   if (!state.session) return;
   try {
-    state.game = await apiRequest(`/gomoku/${state.session.roomId}/place`, {
+    state.game = await apiRequest(`/gomoku/${numericRoomCode(state.session.roomId)}/place`, {
       method: "POST",
       body: { playerId: state.session.playerId, playerToken: state.session.playerToken, row, col },
     });
@@ -806,9 +884,10 @@ async function gomokuPlace(row, col) {
 
 async function gomokuForfeit() {
   if (!state.session) return;
+  if (!confirm("End this game and return to room?")) return;
 
   try {
-    await apiRequest(`/gomoku/${state.session.roomId}/forfeit`, {
+    await apiRequest(`/gomoku/${numericRoomCode(state.session.roomId)}/forfeit`, {
       method: "POST",
       body: { playerId: state.session.playerId, playerToken: state.session.playerToken },
     });
@@ -969,13 +1048,6 @@ async function handleWsMessage(event) {
     if (payload.state?.phase === "finished" && state.room?.status === "waiting") return;
     state.game = payload.state;
     renderAll();
-    if (currentGameType() === "gomoku" && payload.state?.phase === "waiting_for_players" && !payload.state?.yourReady) {
-      void gomokuReady();
-    }
-    if (currentGameType() === "chess" && (payload.state?.phase === "waiting_for_players" || payload.state?.phase === "setup")) {
-      const myReady = payload.state?.players?.find((p) => p.playerId === state.session?.playerId)?.ready;
-      if (!myReady) void chessReady();
-    }
     return;
   }
 
@@ -1007,7 +1079,7 @@ function sendChat() {
   els.chatInput.value = "";
 }
 
-// ── Session ──────────────────────────────────────────────────────────────────
+// ── Session write: setSession / clearSession ──────────────────────────────────
 
 function setSession(roomSession, gameTypeOverride) {
   state.session = {
@@ -1019,7 +1091,23 @@ function setSession(roomSession, gameTypeOverride) {
     gameType: gameTypeOverride || roomSession.gameType || "battleship",
   };
   syncPlayerNameInputs(roomSession.playerName);
-  state.room = null;
+  if (roomSession?.roomId != null) {
+    const fromApi = Array.isArray(roomSession.players) ? roomSession.players : [];
+    const players =
+      fromApi.length > 0
+        ? fromApi
+        : roomSession.playerId
+          ? [{ playerId: roomSession.playerId, playerName: roomSession.playerName }]
+          : [];
+    state.room = {
+      roomId: String(roomSession.roomId),
+      status: roomSession.status ?? "waiting",
+      players,
+      hostPlayerId: roomSession.hostPlayerId,
+    };
+  } else {
+    state.room = null;
+  }
   state.game = null;
   state.chat = [];
   state.placement.draft = [];
@@ -1079,7 +1167,7 @@ function renderHome() {
   const canContinue = Boolean(state.session?.roomId);
   if (els.homeContinueRoom) els.homeContinueRoom.disabled = !canContinue;
   if (els.homeContinueRoom) els.homeContinueRoom.textContent = canContinue
-    ? `Continue room ${state.session.roomId}`
+    ? `Continue room ${numericRoomCode(state.session.roomId)}`
     : "Continue Last Room";
 }
 
@@ -1100,7 +1188,7 @@ function renderRoomAccess() {
   const live = isViewingLiveRoom();
   const allowGuestJoin = roomRoute && !live && (!state.room || (state.room.status === "waiting" && !hasAllPlayers()));
   els.roomGuestPanel.classList.toggle("hidden", !allowGuestJoin);
-  els.roomLivePanel.classList.toggle("hidden", !roomRoute);
+  els.roomLivePanel.classList.toggle("hidden", !(roomRoute && live));
 }
 
 function renderConfigPanel() {
@@ -1138,7 +1226,8 @@ function renderGomokuRulesPanel() {
 function renderSessionSummary() {
   const name = state.session?.playerName || state.profileName || "Guest";
   els.sessionName.textContent = name;
-  els.sessionRoomCode.textContent = state.session?.roomId || state.route?.roomId || "----";
+  els.sessionRoomCode.textContent =
+    numericRoomCode(state.session?.roomId) || state.route?.roomId || "----";
   els.sessionSeat.textContent = seatLabel();
   els.sessionPlayerId.textContent = sessionIdentityLabel();
 }
@@ -1152,22 +1241,39 @@ function renderRoom() {
   }
 
   els.seatStrip.innerHTML = buildSeatStrip(state.room);
-  els.seatStrip.querySelectorAll("[data-join-seat]").forEach((button) => {
-    button.addEventListener("click", () => {
-      if (state.route?.name === "room") {
-        void joinRoomByCode(state.route.roomId);
-      }
-    });
-  });
   els.roomMeta.innerHTML = `
     <div class="mode-pill">Mode: ${escapeHtml(formatGameType(currentGameType()))}</div>
     <div>${escapeHtml(roomStateLine())}</div>
   `;
   renderWaitingActions();
 
-  const inGame = isViewingLiveRoom() && !isWaitingRoomStage() && state.game?.phase !== "finished";
-  els.endGameBtn.classList.toggle("hidden", !inGame);
+  const showEndButton =
+    isViewingLiveRoom() &&
+    !isWaitingRoomStage() &&
+    state.game &&
+    (currentGameType() === "chess"
+      ? state.game.phase === "setup" || state.game.phase === "playing" || state.game.phase === "finished"
+      : state.game.phase !== "finished");
+  if (els.endGameBtn) {
+    els.endGameBtn.classList.toggle("hidden", !showEndButton);
+    if (showEndButton) {
+      if (currentGameType() === "chess") {
+        if (state.game.phase === "finished") {
+          els.endGameBtn.textContent = "End";
+          els.endGameBtn.title = "Clear match and return to lobby";
+        } else {
+          els.endGameBtn.textContent = "Resign";
+          els.endGameBtn.title = "Resign this game";
+        }
+      } else {
+        els.endGameBtn.textContent = "End";
+        els.endGameBtn.title = "End game";
+      }
+    }
+  }
 }
+
+// ── renderGame(): dispatch by currentGameType() ─────────────────────────────
 
 function renderGame() {
   const gameType = currentGameType();
@@ -1249,7 +1355,7 @@ function renderGame() {
     `;
     els.placementPanel.classList.add("hidden");
     els.opponentPanel.classList.add("hidden");
-    els.ownBoardPanel.classList.remove("hidden");
+    els.ownBoardPanel.classList.add("hidden");
     return;
   }
 
@@ -1295,7 +1401,6 @@ function renderChessGame() {
   if (!isRoomRoute() || !isViewingLiveRoom()) {
     if (els.chessStatusTitle) els.chessStatusTitle.textContent = "Waiting";
     if (els.chessBoardPanel) els.chessBoardPanel.classList.add("hidden");
-    if (els.chessSidebarPanel) els.chessSidebarPanel.classList.add("hidden");
     if (els.chessDrawOfferBanner) els.chessDrawOfferBanner.classList.add("hidden");
     if (els.chessBoard) els.chessBoard.classList.add("hidden");
     return;
@@ -1318,14 +1423,9 @@ function renderChessGame() {
       els.chessGameSummary.innerHTML = "";
     }
     els.chessBoardPanel?.classList.add("hidden");
-    els.chessSidebarPanel?.classList.add("hidden");
     els.chessDrawOfferBanner.classList.add("hidden");
     els.chessBoard.classList.add("hidden");
-    els.chessReadySection.classList.add("hidden");
-    els.chessPlaySection.classList.add("hidden");
-    els.chessFinishedSection.classList.add("hidden");
     els.chessPromotionBar.classList.add("hidden");
-    els.chessResignBtn?.classList.add("hidden");
     return;
   }
 
@@ -1336,14 +1436,9 @@ function renderChessGame() {
     els.chessRoundPill.classList.add("hidden");
     els.chessGameSummary.innerHTML = "";
     els.chessBoardPanel?.classList.add("hidden");
-    els.chessSidebarPanel?.classList.add("hidden");
     els.chessDrawOfferBanner.classList.add("hidden");
     els.chessBoard.classList.add("hidden");
-    els.chessReadySection.classList.add("hidden");
-    els.chessPlaySection.classList.add("hidden");
-    els.chessFinishedSection.classList.add("hidden");
     els.chessPromotionBar.classList.add("hidden");
-    els.chessResignBtn?.classList.add("hidden");
     return;
   }
 
@@ -1353,14 +1448,6 @@ function renderChessGame() {
     els.chessGameSummary.innerHTML = "";
     els.chessBoardPanel?.classList.remove("hidden");
     els.chessBoard.classList.remove("hidden");
-    els.chessSidebarPanel?.classList.add("hidden");
-    els.chessReadySection.classList.add("hidden");
-    els.chessPlaySection.classList.add("hidden");
-    els.chessFinishedSection.classList.add("hidden");
-    els.chessResignBtn?.classList.add("hidden");
-    if (els.chessColorLabel) {
-      els.chessColorLabel.textContent = game.yourColor === "white" ? "♔ You play White" : "♚ You play Black";
-    }
 
     const hasDrawOffer = Boolean(game.opponentOfferedDraw);
     els.chessDrawOfferBanner.classList.toggle("hidden", !hasDrawOffer);
@@ -1376,16 +1463,10 @@ function renderChessGame() {
     els.chessStatusTitle.textContent = gameResultText(game);
     els.chessRoundPill.classList.add("hidden");
     els.chessGameSummary.innerHTML = "";
-    els.chessResultLabel.textContent = gameResultText(game);
     els.chessBoardPanel?.classList.remove("hidden");
     els.chessBoard.classList.remove("hidden");
-    els.chessSidebarPanel?.classList.remove("hidden");
-    els.chessReadySection.classList.add("hidden");
-    els.chessPlaySection.classList.add("hidden");
-    els.chessFinishedSection.classList.remove("hidden");
     els.chessDrawOfferBanner.classList.add("hidden");
     els.chessPromotionBar.classList.add("hidden");
-    els.chessResignBtn?.classList.add("hidden");
     renderChessBoard();
   }
 }
@@ -1538,7 +1619,6 @@ function renderGomokuGame() {
     if (els.gomokuBoard) els.gomokuBoard.classList.add("hidden");
     if (els.gomokuBoardPanel) els.gomokuBoardPanel.classList.add("hidden");
     if (els.gomokuSidebarPanel) els.gomokuSidebarPanel.classList.add("hidden");
-    if (els.gomokuReadySection) els.gomokuReadySection.classList.add("hidden");
     if (els.gomokuPlaySection) els.gomokuPlaySection.classList.add("hidden");
     if (els.gomokuFinishedSection) els.gomokuFinishedSection.classList.add("hidden");
     if (els.gomokuChatPanel) els.gomokuChatPanel.classList.add("hidden");
@@ -1564,7 +1644,6 @@ function renderGomokuGame() {
     els.gomokuBoard.classList.add("hidden");
     els.gomokuBoardPanel.classList.add("hidden");
     els.gomokuSidebarPanel.classList.add("hidden");
-    els.gomokuReadySection.classList.add("hidden");
     els.gomokuPlaySection.classList.add("hidden");
     els.gomokuFinishedSection.classList.add("hidden");
     if (els.gomokuChatPanel) els.gomokuChatPanel.classList.add("hidden");
@@ -1580,7 +1659,6 @@ function renderGomokuGame() {
     els.gomokuBoardPanel.classList.add("hidden");
     els.gomokuSidebarPanel.classList.add("hidden");
     els.gomokuBoard.classList.add("hidden");
-    els.gomokuReadySection.classList.add("hidden");
     els.gomokuPlaySection.classList.add("hidden");
     els.gomokuFinishedSection.classList.add("hidden");
     if (els.gomokuChatPanel) els.gomokuChatPanel.classList.add("hidden");
@@ -1594,7 +1672,6 @@ function renderGomokuGame() {
     els.gomokuBoardPanel.classList.remove("hidden");
     els.gomokuBoard.classList.remove("hidden");
     els.gomokuSidebarPanel.classList.add("hidden");
-    els.gomokuReadySection.classList.add("hidden");
     els.gomokuPlaySection.classList.add("hidden");
     els.gomokuFinishedSection.classList.add("hidden");
     if (els.gomokuChatPanel) els.gomokuChatPanel.classList.remove("hidden");
@@ -1610,7 +1687,6 @@ function renderGomokuGame() {
     els.gomokuBoardPanel.classList.remove("hidden");
     els.gomokuBoard.classList.remove("hidden");
     els.gomokuSidebarPanel.classList.remove("hidden");
-    els.gomokuReadySection.classList.add("hidden");
     els.gomokuPlaySection.classList.add("hidden");
     els.gomokuFinishedSection.classList.remove("hidden");
     if (els.gomokuChatPanel) els.gomokuChatPanel.classList.remove("hidden");
@@ -1763,7 +1839,7 @@ async function submitShips() {
   }
 
   try {
-    state.game = await apiRequest(`/battleship/${state.session.roomId}/setup`, {
+    state.game = await apiRequest(`/battleship/${numericRoomCode(state.session.roomId)}/setup`, {
       method: "POST",
       body: {
         playerId: state.session.playerId,
@@ -1784,7 +1860,7 @@ async function fireAt(row, col) {
   if (!state.session || !canFire()) return;
 
   try {
-    state.game = await apiRequest(`/battleship/${state.session.roomId}/fire`, {
+    state.game = await apiRequest(`/battleship/${numericRoomCode(state.session.roomId)}/fire`, {
       method: "POST",
       body: {
         playerId: state.session.playerId,
@@ -2083,7 +2159,7 @@ function playerReady(playerId) {
 function canPlaceShips() {
   if (!isViewingLiveRoom() || !state.session) return false;
   if (isWaitingRoomStage()) return false;
-  if (!state.game) return true;
+  if (!state.game) return false;
   const me = state.game.players.find((player) => player.playerId === state.session.playerId);
   return Boolean(me) && !me.ready && state.game.phase !== "playing" && state.game.phase !== "finished";
 }
@@ -2097,13 +2173,14 @@ function isRoomRoute() {
 }
 
 function isViewingLiveRoom() {
-  return state.route?.name === "room" && state.session?.roomId === state.route.roomId;
+  return sessionMatchesRoomRoute(state.session, state.route);
 }
 
 function hasSavedSessionForRoom(roomId) {
   return Boolean(
     roomId &&
-    state.session?.roomId === roomId &&
+    state.session?.gameType === currentGameType() &&
+    numericRoomCode(state.session.roomId) === roomId &&
     state.session?.playerId &&
     state.session?.playerToken
   );
@@ -2195,16 +2272,13 @@ function buildSeatStrip(room) {
 
 function renderSeatCard(player, seatNumber, room) {
   if (!player) {
-    const canJoin = !isViewingLiveRoom() && room?.status === "waiting";
     return `
       <div class="seat-card seat-empty">
         <div class="seat-avatar">
-          ${canJoin
-            ? '<button class="seat-join-button" data-join-seat type="button">Join</button>'
-            : '<div class="seat-name">+</div>'}
+          <div class="seat-name">+</div>
           <span class="seat-index">${seatNumber}</span>
         </div>
-        <div class="seat-helper">${canJoin ? "Tap to take this seat" : "Open seat"}</div>
+        <div class="seat-helper">Open seat</div>
       </div>
     `;
   }
@@ -2231,18 +2305,7 @@ function renderSeatCard(player, seatNumber, room) {
   `;
 }
 
-// ── Utilities ────────────────────────────────────────────────────────────────
-
-function firstEmoji(value) {
-  if (!value) return "";
-  const match = String(value).trim().match(/^\p{Extended_Pictographic}/u);
-  return match ? match[0] : "";
-}
-
-function stripLeadingEmoji(value) {
-  if (!value) return "";
-  return String(value).trim().replace(/^\p{Extended_Pictographic}\s*/u, "");
-}
+// ── Utilities (HTTP + app-only helpers; shared string/emoji/URL helpers in game-shared.js) ──
 
 async function apiRequest(path, options = {}) {
   const url = `${state.config.restUrl}${path}`;
@@ -2280,7 +2343,7 @@ function requirePlayerName() {
 }
 
 function generateDefaultPlayerName() {
-  return ANIMAL_EMOJIS[Math.floor(Math.random() * ANIMAL_EMOJIS.length)];
+  return pickRandomAnimalEmoji();
 }
 
 let toastHideTimer = null;
@@ -2298,7 +2361,7 @@ function showToast(message, isError = false) {
 
 async function copyRoomLink() {
   if (state.route?.name !== "room") return;
-  const fullUrl = `${window.location.origin}${roomPath(state.route.roomId)}`;
+  const fullUrl = `${window.location.origin}${roomPath(state.route.roomId, state.route.gameType)}`;
   try {
     await navigator.clipboard.writeText(fullUrl);
     showToast("Link copied. Share with your friends.");
@@ -2323,10 +2386,6 @@ function playerNameForId(playerId) {
   return shortId(playerId);
 }
 
-function normalizeBaseUrl(url) {
-  return url.trim().replace(/\/$/, "");
-}
-
 function normalizeRoomId(value) {
   const digits = String(value || "").replace(/\D/g, "").slice(0, 4);
   els.lobbyRoomIdInput.value = digits;
@@ -2345,12 +2404,8 @@ function isRoomIdSegment(value) {
 
 function roomPath(roomId, gameType) {
   const gt = gameType || state.session?.gameType || state.route?.gameType || "battleship";
-  return `/${gt}/${roomId}`;
-}
-
-function readJson(key) {
-  const raw = localStorage.getItem(key);
-  return raw ? JSON.parse(raw) : null;
+  const code = numericRoomCode(roomId);
+  return `/${gt}/${code}`;
 }
 
 function formatPhase(phase) {
@@ -2360,16 +2415,6 @@ function formatPhase(phase) {
 function formatGameType(gameType) {
   const names = { battleship: "Battleship", chess: "Chess", gomoku: "Gomoku" };
   return names[gameType] || String(gameType || "");
-}
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[character]));
 }
 
 function toCamel(value) {
