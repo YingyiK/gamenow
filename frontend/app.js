@@ -138,24 +138,26 @@ function cacheElements() {
     "chess-round-pill",
     "chess-game-summary",
     "chess-board",
+    "chess-board-panel",
+    "chess-sidebar-panel",
     "chess-promotion-bar",
     "chess-ready-section",
-    "chess-ready-btn",
     "chess-play-section",
     "chess-color-label",
     "chess-draw-offer-banner",
     "chess-accept-draw",
     "chess-decline-draw",
-    "chess-move-list",
-    "chess-draw-btn",
-    "chess-resign-btn",
     "chess-finished-section",
     "chess-result-label",
+    "chess-leave-btn",
     "gomoku-game",
     "gomoku-status-title",
     "gomoku-round-pill",
     "gomoku-game-summary",
     "gomoku-board",
+    "gomoku-board-panel",
+    "gomoku-sidebar-panel",
+    "gomoku-chat-panel",
     "gomoku-ready-section",
     "gomoku-ready-btn",
     "gomoku-play-section",
@@ -278,11 +280,9 @@ function bindEvents() {
   els.roomPlayerNameInput?.addEventListener("input", (event) => syncPlayerNameInputs(event.target.value));
 
   // Chess game
-  els.chessReadyBtn?.addEventListener("click", chessReady);
-  els.chessDrawBtn?.addEventListener("click", () => void chessDraw("offer"));
   els.chessAcceptDraw?.addEventListener("click", () => void chessDraw("accept"));
   els.chessDeclineDraw?.addEventListener("click", () => void chessDraw("decline"));
-  els.chessResignBtn?.addEventListener("click", chessResign);
+  els.chessLeaveBtn?.addEventListener("click", leaveRoom);
   els.chessPromotionBar?.querySelectorAll("[data-promo]").forEach((btn) => {
     btn.addEventListener("click", () => {
       if (state.promotionPending) {
@@ -644,6 +644,13 @@ async function refreshAll() {
       await fetchRoom();
       if (!isWaitingRoomStage()) {
         await fetchGame();
+        if (currentGameType() === "gomoku" && state.game?.phase === "waiting_for_players" && !state.game?.yourReady) {
+          void gomokuReady();
+        }
+        if (currentGameType() === "chess" && state.game?.phase === "waiting_for_players") {
+          const myReady = state.game?.players?.find((p) => p.playerId === state.session?.playerId)?.ready;
+          if (!myReady) void chessReady();
+        }
       }
     } else if (state.route?.roomId) {
       await fetchPublicRoom(state.route.roomId);
@@ -952,8 +959,16 @@ async function handleWsMessage(event) {
   }
 
   if (payload.type === "GAME_STATE") {
+    if (payload.state?.phase === "finished" && state.room?.status === "waiting") return;
     state.game = payload.state;
     renderAll();
+    if (currentGameType() === "gomoku" && payload.state?.phase === "waiting_for_players" && !payload.state?.yourReady) {
+      void gomokuReady();
+    }
+    if (currentGameType() === "chess" && payload.state?.phase === "waiting_for_players") {
+      const myReady = payload.state?.players?.find((p) => p.playerId === state.session?.playerId)?.ready;
+      if (!myReady) void chessReady();
+    }
     return;
   }
 
@@ -989,7 +1004,7 @@ function sendChat() {
 
 function setSession(roomSession, gameTypeOverride) {
   state.session = {
-    roomId: roomSession.roomId,
+    roomId: String(roomSession.roomId),
     playerId: roomSession.playerId,
     playerToken: roomSession.playerToken,
     playerName: roomSession.playerName,
@@ -1143,7 +1158,7 @@ function renderRoom() {
   `;
   renderWaitingActions();
 
-  const inGame = isViewingLiveRoom() && !isWaitingRoomStage();
+  const inGame = isViewingLiveRoom() && !isWaitingRoomStage() && state.game?.phase !== "finished" && currentGameType() !== "chess";
   els.endGameBtn.classList.toggle("hidden", !inGame);
 }
 
@@ -1272,15 +1287,14 @@ function renderWaitingActions() {
 function renderChessGame() {
   if (!isRoomRoute() || !isViewingLiveRoom()) {
     if (els.chessStatusTitle) els.chessStatusTitle.textContent = "Waiting";
-    if (els.chessReadySection) els.chessReadySection.classList.add("hidden");
-    if (els.chessPlaySection) els.chessPlaySection.classList.add("hidden");
-    if (els.chessFinishedSection) els.chessFinishedSection.classList.add("hidden");
-    renderChessBoard();
+    if (els.chessBoardPanel) els.chessBoardPanel.classList.add("hidden");
+    if (els.chessSidebarPanel) els.chessSidebarPanel.classList.add("hidden");
+    if (els.chessDrawOfferBanner) els.chessDrawOfferBanner.classList.add("hidden");
+    if (els.chessBoard) els.chessBoard.classList.add("hidden");
     return;
   }
 
   const game = state.game;
-  renderChessBoard();
 
   if (!game) {
     if (isWaitingRoomStage()) {
@@ -1296,6 +1310,10 @@ function renderChessGame() {
       els.chessRoundPill.classList.add("hidden");
       els.chessGameSummary.innerHTML = "";
     }
+    els.chessBoardPanel.classList.add("hidden");
+    els.chessSidebarPanel.classList.add("hidden");
+    els.chessDrawOfferBanner.classList.add("hidden");
+    els.chessBoard.classList.add("hidden");
     els.chessReadySection.classList.add("hidden");
     els.chessPlaySection.classList.add("hidden");
     els.chessFinishedSection.classList.add("hidden");
@@ -1305,25 +1323,31 @@ function renderChessGame() {
 
   const phase = game.phase;
 
-  if (phase === "waiting_for_players") {
-    els.chessStatusTitle.textContent = "Get Ready";
-    els.chessReadySection.classList.remove("hidden");
+  if (phase === "waiting_for_players" || phase === "setup") {
+    els.chessStatusTitle.textContent = "Starting...";
+    els.chessRoundPill.classList.add("hidden");
+    els.chessGameSummary.innerHTML = "";
+    els.chessBoardPanel.classList.add("hidden");
+    els.chessSidebarPanel.classList.add("hidden");
+    els.chessDrawOfferBanner.classList.add("hidden");
+    els.chessBoard.classList.add("hidden");
+    els.chessReadySection.classList.add("hidden");
     els.chessPlaySection.classList.add("hidden");
     els.chessFinishedSection.classList.add("hidden");
     els.chessPromotionBar.classList.add("hidden");
-    const yourReady = game.players?.find((p) => p.playerId === state.session?.playerId)?.ready || false;
-    els.chessReadyBtn.disabled = yourReady;
-    els.chessReadyBtn.textContent = yourReady ? "Waiting for opponent..." : "I'm Ready";
     return;
   }
 
   if (phase === "playing") {
     els.chessStatusTitle.textContent = game.yourTurn ? "Your turn" : "Opponent's turn";
+    els.chessRoundPill.classList.add("hidden");
+    els.chessGameSummary.innerHTML = "";
+    els.chessBoardPanel.classList.remove("hidden");
+    els.chessBoard.classList.remove("hidden");
+    els.chessSidebarPanel.classList.add("hidden");
     els.chessReadySection.classList.add("hidden");
-    els.chessPlaySection.classList.remove("hidden");
+    els.chessPlaySection.classList.add("hidden");
     els.chessFinishedSection.classList.add("hidden");
-
-    els.chessColorLabel.textContent = game.yourColor ? `You play ${game.yourColor}` : "";
 
     const hasDrawOffer = Boolean(game.opponentOfferedDraw);
     els.chessDrawOfferBanner.classList.toggle("hidden", !hasDrawOffer);
@@ -1331,35 +1355,22 @@ function renderChessGame() {
     const showPromo = Boolean(state.promotionPending);
     els.chessPromotionBar.classList.toggle("hidden", !showPromo);
 
-    // Move list — pair up SANs into "1. e4 e5" rows (moveHistory items are {ply, san, ...})
-    const moves = game.moveHistory || [];
-    const pairs = [];
-    for (let i = 0; i < moves.length; i += 2) {
-      const s1 = moves[i]?.san || String(moves[i]);
-      const s2 = moves[i + 1] ? (moves[i + 1]?.san || String(moves[i + 1])) : "";
-      pairs.push(`${Math.floor(i / 2) + 1}. ${s1}${s2 ? " " + s2 : ""}`);
-    }
-    els.chessMoveList.innerHTML = pairs.map((p) => `<div>${escapeHtml(p)}</div>`).join("");
-    // Scroll move list to bottom
-    els.chessMoveList.scrollTop = els.chessMoveList.scrollHeight;
+    renderChessBoard();
     return;
   }
 
   if (phase === "finished") {
-    const winner = game.winnerPlayerId;
-    let resultText;
-    if (winner === "DRAW") {
-      resultText = "Draw!";
-    } else if (winner === state.session?.playerId) {
-      resultText = "You won!";
-    } else {
-      resultText = `${playerNameForId(winner)} won!`;
-    }
     els.chessStatusTitle.textContent = "Game Over";
-    els.chessResultLabel.textContent = resultText;
+    els.chessRoundPill.classList.add("hidden");
+    els.chessGameSummary.innerHTML = "";
+    els.chessResultLabel.textContent = gameResultText(game);
+    els.chessBoardPanel.classList.add("hidden");
+    els.chessBoard.classList.add("hidden");
+    els.chessSidebarPanel.classList.remove("hidden");
     els.chessReadySection.classList.add("hidden");
     els.chessPlaySection.classList.add("hidden");
     els.chessFinishedSection.classList.remove("hidden");
+    els.chessDrawOfferBanner.classList.add("hidden");
     els.chessPromotionBar.classList.add("hidden");
   }
 }
@@ -1507,10 +1518,15 @@ function handleChessCellClick(sq) {
 function renderGomokuGame() {
   if (!isRoomRoute() || !isViewingLiveRoom()) {
     if (els.gomokuStatusTitle) els.gomokuStatusTitle.textContent = "Waiting";
+    if (els.gomokuRoundPill) els.gomokuRoundPill.classList.add("hidden");
+    if (els.gomokuGameSummary) els.gomokuGameSummary.innerHTML = "";
+    if (els.gomokuBoard) els.gomokuBoard.classList.add("hidden");
+    if (els.gomokuBoardPanel) els.gomokuBoardPanel.classList.add("hidden");
+    if (els.gomokuSidebarPanel) els.gomokuSidebarPanel.classList.add("hidden");
     if (els.gomokuReadySection) els.gomokuReadySection.classList.add("hidden");
     if (els.gomokuPlaySection) els.gomokuPlaySection.classList.add("hidden");
     if (els.gomokuFinishedSection) els.gomokuFinishedSection.classList.add("hidden");
-    renderGomokuBoard();
+    if (els.gomokuChatPanel) els.gomokuChatPanel.classList.add("hidden");
     return;
   }
 
@@ -1530,59 +1546,59 @@ function renderGomokuGame() {
       els.gomokuRoundPill.classList.add("hidden");
       els.gomokuGameSummary.innerHTML = "";
     }
+    els.gomokuBoard.classList.add("hidden");
+    els.gomokuBoardPanel.classList.add("hidden");
+    els.gomokuSidebarPanel.classList.add("hidden");
     els.gomokuReadySection.classList.add("hidden");
     els.gomokuPlaySection.classList.add("hidden");
     els.gomokuFinishedSection.classList.add("hidden");
-    renderGomokuBoard();
+    if (els.gomokuChatPanel) els.gomokuChatPanel.classList.add("hidden");
     return;
   }
 
   const phase = game.phase;
 
   if (phase === "waiting_for_players") {
-    els.gomokuStatusTitle.textContent = game.allPlayersJoined ? "Get Ready" : "Waiting for Players";
-    els.gomokuReadySection.classList.toggle("hidden", !game.allPlayersJoined);
+    els.gomokuStatusTitle.textContent = "Starting...";
+    els.gomokuRoundPill.classList.add("hidden");
+    els.gomokuGameSummary.innerHTML = "";
+    els.gomokuBoardPanel.classList.add("hidden");
+    els.gomokuSidebarPanel.classList.add("hidden");
+    els.gomokuBoard.classList.add("hidden");
+    els.gomokuReadySection.classList.add("hidden");
     els.gomokuPlaySection.classList.add("hidden");
     els.gomokuFinishedSection.classList.add("hidden");
-    if (game.allPlayersJoined) {
-      els.gomokuReadyBtn.disabled = game.yourReady;
-      els.gomokuReadyBtn.textContent = game.yourReady ? "Waiting for opponent..." : "I'm Ready";
-    }
-    renderGomokuBoard();
+    if (els.gomokuChatPanel) els.gomokuChatPanel.classList.add("hidden");
     return;
   }
 
   if (phase === "playing") {
     els.gomokuStatusTitle.textContent = game.yourTurn ? "Your turn" : "Opponent's turn";
+    els.gomokuRoundPill.classList.add("hidden");
+    els.gomokuGameSummary.innerHTML = "";
+    els.gomokuBoardPanel.classList.remove("hidden");
+    els.gomokuBoard.classList.remove("hidden");
+    els.gomokuSidebarPanel.classList.add("hidden");
     els.gomokuReadySection.classList.add("hidden");
-    els.gomokuPlaySection.classList.remove("hidden");
+    els.gomokuPlaySection.classList.add("hidden");
     els.gomokuFinishedSection.classList.add("hidden");
-    els.gomokuColorLabel.textContent = game.yourColor ? `You are ${game.yourColor}` : "";
-    // Recent moves
-    const recent = (game.moveHistory || []).slice(-8);
-    els.gomokuMoveList.innerHTML = recent
-      .map((m) => `<div>${escapeHtml(`#${m.moveNumber}: ${m.color} (${m.row},${m.col})`)}</div>`)
-      .join("");
+    if (els.gomokuChatPanel) els.gomokuChatPanel.classList.remove("hidden");
     renderGomokuBoard();
     return;
   }
 
   if (phase === "finished") {
-    const winner = game.winnerPlayerId;
-    let resultText;
-    if (winner === "DRAW") {
-      resultText = "Draw!";
-    } else if (winner === state.session?.playerId) {
-      resultText = "You won!";
-    } else {
-      resultText = `${playerNameForId(winner)} won!`;
-    }
     els.gomokuStatusTitle.textContent = "Game Over";
-    els.gomokuResultLabel.textContent = resultText;
+    els.gomokuRoundPill.classList.add("hidden");
+    els.gomokuGameSummary.innerHTML = "";
+    els.gomokuResultLabel.textContent = gameResultText(game);
+    els.gomokuBoardPanel.classList.add("hidden");
+    els.gomokuBoard.classList.add("hidden");
+    els.gomokuSidebarPanel.classList.remove("hidden");
     els.gomokuReadySection.classList.add("hidden");
     els.gomokuPlaySection.classList.add("hidden");
     els.gomokuFinishedSection.classList.remove("hidden");
-    renderGomokuBoard();
+    if (els.gomokuChatPanel) els.gomokuChatPanel.classList.remove("hidden");
   }
 }
 
@@ -2099,6 +2115,13 @@ function sessionIdentityLabel() {
   if (!state.session) return "Not Joined";
   if (state.room?.hostPlayerId === state.session.playerId) return "Host";
   return "Player";
+}
+
+function gameResultText(game) {
+  const winner = game.winnerPlayerId;
+  if (winner === "DRAW") return "Draw!";
+  if (winner === state.session?.playerId) return "You won!";
+  return `${playerNameForId(winner)} won!`;
 }
 
 function renderWinnerLabel() {
