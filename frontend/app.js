@@ -55,8 +55,10 @@ document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
   loadConfig();
   loadSession();
-  // battleship.html 上，把路径规范化（去掉 .html 后缀再解析）
-  const rawPath = window.location.pathname.replace(/\/battleship\.html$/, "/battleship");
+  const rawPath = window.location.pathname
+    .replace(/\/battleship\.html$/, "/battleship")
+    .replace(/\/chess\.html$/, "/chess")
+    .replace(/\/gomoku\.html$/, "/gomoku");
   state.route = parseRoute(rawPath);
   renderAll();
   void onRouteChanged();
@@ -175,7 +177,7 @@ function cacheElements() {
 
 function bindEvents() {
   els.brandButton?.addEventListener("click", () => { location.href = "/"; });
-  els.brandButton.addEventListener("dblclick", (event) => {
+  els.brandButton?.addEventListener("dblclick", (event) => {
     event.preventDefault();
     openConfigPanel();
   });
@@ -194,12 +196,12 @@ function bindEvents() {
   });
 
   // Battleship lobby
-  els.toggleRules.addEventListener("click", () => {
+  els.toggleRules?.addEventListener("click", () => {
     state.rulesOpen = !state.rulesOpen;
     renderRulesPanel();
   });
-  els.createRoom.addEventListener("click", createBattleshipRoom);
-  els.joinRoom.addEventListener("click", () => {
+  els.createRoom?.addEventListener("click", createBattleshipRoom);
+  els.joinRoom?.addEventListener("click", () => {
     const roomId = normalizeRoomId(els.lobbyRoomIdInput.value);
     if (roomId) {
       void joinRoomByCode(roomId);
@@ -207,16 +209,16 @@ function bindEvents() {
       setStatus("Please enter a 4-digit room code.", true);
     }
   });
-  els.lobbyPlayerNameInput.addEventListener("input", (event) => syncPlayerNameInputs(event.target.value));
-  els.lobbyRoomIdInput.addEventListener("input", () => normalizeRoomId(els.lobbyRoomIdInput.value));
+  els.lobbyPlayerNameInput?.addEventListener("input", (event) => syncPlayerNameInputs(event.target.value));
+  els.lobbyRoomIdInput?.addEventListener("input", () => normalizeRoomId(els.lobbyRoomIdInput.value));
 
   // Chess lobby
-  els.chessToggleRules.addEventListener("click", () => {
+  els.chessToggleRules?.addEventListener("click", () => {
     state.chessRulesOpen = !state.chessRulesOpen;
     renderChessRulesPanel();
   });
-  els.chessCreateRoom.addEventListener("click", createChessRoom);
-  els.chessJoinRoom.addEventListener("click", () => {
+  els.chessCreateRoom?.addEventListener("click", createChessRoom);
+  els.chessJoinRoom?.addEventListener("click", () => {
     syncPlayerNameInputs(els.chessLobbyPlayerNameInput.value || state.profileName);
     const roomId = normalizeInputRoomId(els.chessLobbyRoomIdInput);
     if (roomId) {
@@ -225,16 +227,16 @@ function bindEvents() {
       setStatus("Please enter a 4-digit room code.", true);
     }
   });
-  els.chessLobbyPlayerNameInput.addEventListener("input", (event) => syncPlayerNameInputs(event.target.value));
-  els.chessLobbyRoomIdInput.addEventListener("input", () => normalizeInputRoomId(els.chessLobbyRoomIdInput));
+  els.chessLobbyPlayerNameInput?.addEventListener("input", (event) => syncPlayerNameInputs(event.target.value));
+  els.chessLobbyRoomIdInput?.addEventListener("input", () => normalizeInputRoomId(els.chessLobbyRoomIdInput));
 
   // Gomoku lobby
-  els.gomokuToggleRules.addEventListener("click", () => {
+  els.gomokuToggleRules?.addEventListener("click", () => {
     state.gomokuRulesOpen = !state.gomokuRulesOpen;
     renderGomokuRulesPanel();
   });
-  els.gomokuCreateRoom.addEventListener("click", createGomokuRoom);
-  els.gomokuJoinRoom.addEventListener("click", () => {
+  els.gomokuCreateRoom?.addEventListener("click", createGomokuRoom);
+  els.gomokuJoinRoom?.addEventListener("click", () => {
     syncPlayerNameInputs(els.gomokuLobbyPlayerNameInput.value || state.profileName);
     const roomId = normalizeInputRoomId(els.gomokuLobbyRoomIdInput);
     if (roomId) {
@@ -243,45 +245,45 @@ function bindEvents() {
       setStatus("Please enter a 4-digit room code.", true);
     }
   });
-  els.gomokuLobbyPlayerNameInput.addEventListener("input", (event) => syncPlayerNameInputs(event.target.value));
-  els.gomokuLobbyRoomIdInput.addEventListener("input", () => normalizeInputRoomId(els.gomokuLobbyRoomIdInput));
+  els.gomokuLobbyPlayerNameInput?.addEventListener("input", (event) => syncPlayerNameInputs(event.target.value));
+  els.gomokuLobbyRoomIdInput?.addEventListener("input", () => normalizeInputRoomId(els.gomokuLobbyRoomIdInput));
 
   // Room page
-  els.joinCurrentRoom.addEventListener("click", () => {
+  els.joinCurrentRoom?.addEventListener("click", () => {
     if (state.route?.name === "room") {
       void joinRoomByCode(state.route.roomId);
     }
   });
-  els.roomContinueCurrent.addEventListener("click", () => {
+  els.roomContinueCurrent?.addEventListener("click", () => {
     if (state.session?.roomId) {
       navigateTo(roomPath(state.session.roomId));
     }
   });
-  els.copyRoomLink.addEventListener("click", copyRoomLink);
-  els.refreshRoom.addEventListener("click", refreshAll);
-  els.leaveRoom.addEventListener("click", leaveRoom);
-  els.endGameBtn.addEventListener("click", forfeitGame);
-  els.startGame.addEventListener("click", startRoom);
-  els.leaveSeat.addEventListener("click", leaveRoom);
+  els.copyRoomLink?.addEventListener("click", copyRoomLink);
+  els.refreshRoom?.addEventListener("click", refreshAll);
+  els.leaveRoom?.addEventListener("click", leaveRoom);
+  els.endGameBtn?.addEventListener("click", forfeitGame);
+  els.startGame?.addEventListener("click", startRoom);
+  els.leaveSeat?.addEventListener("click", leaveRoom);
 
   // Battleship game
-  els.toggleOrientation.addEventListener("click", rotateSelectedShip);
-  els.randomizeShips.addEventListener("click", randomizeShips);
-  els.resetShips.addEventListener("click", resetShips);
-  els.submitShips.addEventListener("click", submitShips);
-  els.sendChat.addEventListener("click", sendChat);
-  els.chatInput.addEventListener("keydown", (event) => {
+  els.toggleOrientation?.addEventListener("click", rotateSelectedShip);
+  els.randomizeShips?.addEventListener("click", randomizeShips);
+  els.resetShips?.addEventListener("click", resetShips);
+  els.submitShips?.addEventListener("click", submitShips);
+  els.sendChat?.addEventListener("click", sendChat);
+  els.chatInput?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") sendChat();
   });
-  els.roomPlayerNameInput.addEventListener("input", (event) => syncPlayerNameInputs(event.target.value));
+  els.roomPlayerNameInput?.addEventListener("input", (event) => syncPlayerNameInputs(event.target.value));
 
   // Chess game
-  els.chessReadyBtn.addEventListener("click", chessReady);
-  els.chessDrawBtn.addEventListener("click", () => void chessDraw("offer"));
-  els.chessAcceptDraw.addEventListener("click", () => void chessDraw("accept"));
-  els.chessDeclineDraw.addEventListener("click", () => void chessDraw("decline"));
-  els.chessResignBtn.addEventListener("click", chessResign);
-  els.chessPromotionBar.querySelectorAll("[data-promo]").forEach((btn) => {
+  els.chessReadyBtn?.addEventListener("click", chessReady);
+  els.chessDrawBtn?.addEventListener("click", () => void chessDraw("offer"));
+  els.chessAcceptDraw?.addEventListener("click", () => void chessDraw("accept"));
+  els.chessDeclineDraw?.addEventListener("click", () => void chessDraw("decline"));
+  els.chessResignBtn?.addEventListener("click", chessResign);
+  els.chessPromotionBar?.querySelectorAll("[data-promo]").forEach((btn) => {
     btn.addEventListener("click", () => {
       if (state.promotionPending) {
         const { from, to } = state.promotionPending;
@@ -292,12 +294,12 @@ function bindEvents() {
   });
 
   // Gomoku game
-  els.gomokuReadyBtn.addEventListener("click", gomokuReady);
-  els.gomokuForfeitBtn.addEventListener("click", gomokuForfeit);
+  els.gomokuReadyBtn?.addEventListener("click", gomokuReady);
+  els.gomokuForfeitBtn?.addEventListener("click", gomokuForfeit);
 
-  els.saveConfig.addEventListener("click", saveConfig);
-  els.closeConfig.addEventListener("click", closeConfigPanel);
-  els.configBackdrop.addEventListener("click", closeConfigPanel);
+  els.saveConfig?.addEventListener("click", saveConfig);
+  els.closeConfig?.addEventListener("click", closeConfigPanel);
+  els.configBackdrop?.addEventListener("click", closeConfigPanel);
 
   document.addEventListener("keydown", handleGlobalKeydown);
   window.addEventListener("popstate", () => {
@@ -395,7 +397,12 @@ function parseRoute(pathname) {
 }
 
 function currentGameType() {
-  return state.session?.gameType || state.route?.gameType || "battleship";
+  if (state.session?.gameType) return state.session.gameType;
+  if (state.route?.gameType) return state.route.gameType;
+  if (state.route?.name === "chess" || state.route?.name === "gomoku" || state.route?.name === "battleship") {
+    return state.route.name;
+  }
+  return "battleship";
 }
 
 function navigateTo(path, replace = false) {
@@ -421,7 +428,7 @@ async function onRouteChanged() {
     return;
   }
 
-  if (state.route.roomId) {
+  if (state.route.roomId && els.lobbyRoomIdInput) {
     els.lobbyRoomIdInput.value = state.route.roomId;
   }
 
@@ -635,9 +642,7 @@ async function refreshAll() {
   try {
     if (isViewingLiveRoom()) {
       await fetchRoom();
-      const gameType = currentGameType();
-      // Gomoku always fetches game (ready-up is within the game service, no separate "start" step)
-      if (gameType === "gomoku" || !isWaitingRoomStage()) {
+      if (!isWaitingRoomStage()) {
         await fetchGame();
       }
     } else if (state.route?.roomId) {
@@ -1082,7 +1087,9 @@ function renderConfigPanel() {
 }
 
 function renderRulesPanel() {
-  els.rulesPanel.classList.toggle("hidden", !state.rulesOpen);
+  if (els.rulesPanel) {
+    els.rulesPanel.classList.toggle("hidden", !state.rulesOpen);
+  }
   if (els.toggleRules) {
     els.toggleRules.setAttribute("aria-expanded", String(state.rulesOpen));
   }
@@ -1255,9 +1262,7 @@ function renderWaitingActions() {
 
   const host = isHostPlayer();
   const full = hasAllPlayers();
-  const gameType = currentGameType();
-  // Gomoku skips the host-start step (Ready buttons are in the game panel)
-  els.startGame.classList.toggle("hidden", !host || gameType === "gomoku");
+  els.startGame.classList.toggle("hidden", !host);
   els.startGame.disabled = !full;
   els.leaveSeat.disabled = false;
 }
@@ -1278,7 +1283,19 @@ function renderChessGame() {
   renderChessBoard();
 
   if (!game) {
-    els.chessStatusTitle.textContent = isWaitingRoomStage() ? "Waiting for Players" : "Loading...";
+    if (isWaitingRoomStage()) {
+      els.chessStatusTitle.textContent = isHostPlayer() ? "Waiting Room" : "Choose a Seat";
+      els.chessRoundPill.classList.remove("hidden");
+      els.chessRoundPill.textContent = `Players ${state.room?.players?.length || 0}/2`;
+      els.chessGameSummary.innerHTML = `
+        <div class="stage-summary-line">${escapeHtml(waitingRoomHeadline())}</div>
+        <div class="stage-summary-subline">${escapeHtml(waitingRoomSubline())}</div>
+      `;
+    } else {
+      els.chessStatusTitle.textContent = "Loading...";
+      els.chessRoundPill.classList.add("hidden");
+      els.chessGameSummary.innerHTML = "";
+    }
     els.chessReadySection.classList.add("hidden");
     els.chessPlaySection.classList.add("hidden");
     els.chessFinishedSection.classList.add("hidden");
@@ -1500,7 +1517,19 @@ function renderGomokuGame() {
   const game = state.game;
 
   if (!game) {
-    els.gomokuStatusTitle.textContent = hasAllPlayers() ? "Loading..." : "Waiting for players";
+    if (isWaitingRoomStage()) {
+      els.gomokuStatusTitle.textContent = isHostPlayer() ? "Waiting Room" : "Choose a Seat";
+      els.gomokuRoundPill.classList.remove("hidden");
+      els.gomokuRoundPill.textContent = `Players ${state.room?.players?.length || 0}/2`;
+      els.gomokuGameSummary.innerHTML = `
+        <div class="stage-summary-line">${escapeHtml(waitingRoomHeadline())}</div>
+        <div class="stage-summary-subline">${escapeHtml(waitingRoomSubline())}</div>
+      `;
+    } else {
+      els.gomokuStatusTitle.textContent = "Loading...";
+      els.gomokuRoundPill.classList.add("hidden");
+      els.gomokuGameSummary.innerHTML = "";
+    }
     els.gomokuReadySection.classList.add("hidden");
     els.gomokuPlaySection.classList.add("hidden");
     els.gomokuFinishedSection.classList.add("hidden");
