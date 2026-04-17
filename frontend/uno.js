@@ -43,6 +43,11 @@ function showView(name) {
   ["lobby","room","game"].forEach(v => {
     document.getElementById("view-" + v).classList.toggle("hidden", v !== name);
   });
+  const forfeitNavBtn = document.getElementById("forfeit-nav-btn");
+  if (forfeitNavBtn) forfeitNavBtn.classList.toggle("hidden", name !== "game");
+  // 游戏进行中隐藏 Invite 按钮
+  const copyLinkBtn = document.getElementById("copy-link-btn");
+  if (copyLinkBtn) copyLinkBtn.classList.toggle("hidden", name === "game");
 }
 
 /* ── Session ───────────────────────────────────────────────── */
@@ -100,7 +105,7 @@ function bindEvents() {
   document.getElementById("copy-link-btn").addEventListener("click", copyLink);
   document.getElementById("draw-pile").addEventListener("click", drawCard);
   document.getElementById("uno-shout-btn").addEventListener("click", shoutUno);
-  document.getElementById("forfeit-btn").addEventListener("click", forfeit);
+  document.getElementById("forfeit-nav-btn").addEventListener("click", forfeit);
   document.getElementById("restart-btn").addEventListener("click", restartGame);
   document.getElementById("send-chat-btn").addEventListener("click", sendChat);
   document.getElementById("chat-input").addEventListener("keydown", e => { if (e.key === "Enter") sendChat(); });
@@ -502,18 +507,41 @@ function renderGame() {
   unoBtnEl.disabled = myHand.length !== 1 || g.yourSaidUno || g.phase !== "playing";
 
   // forfeit button
-  document.getElementById("forfeit-btn").classList.toggle("hidden", g.phase === "finished");
+  const forfeitNavBtn = document.getElementById("forfeit-nav-btn");
+  if (forfeitNavBtn) forfeitNavBtn.classList.toggle("hidden", g.phase === "finished");
 
   // hand
   renderHand();
   renderChat();
 }
 
+function _sortHand(hand) {
+  // 颜色排序：万能牌最前，其余按 Red/Yellow/Green/Blue
+  const colorOrder = { "Wild": 0, "Red": 1, "Yellow": 2, "Green": 3, "Blue": 4 };
+  // 数值排序：特殊牌（Skip/Reverse/+2/Wild+4）按名字排，数字牌按数字大小
+  const valueOrder = v => {
+    if (v === "Wild")    return -3;
+    if (v === "Wild+4")  return -2;
+    if (v === "Reverse") return 11;
+    if (v === "Skip")    return 12;
+    if (v === "+2")      return 13;
+    const n = parseInt(v, 10);
+    return isNaN(n) ? 99 : n;
+  };
+  return [...hand].sort((a, b) => {
+    const ca = a.split(":"), cb = b.split(":");
+    const colorA = colorOrder[ca[0]] ?? 9;
+    const colorB = colorOrder[cb[0]] ?? 9;
+    if (colorA !== colorB) return colorA - colorB;
+    return valueOrder(ca[1]) - valueOrder(cb[1]);
+  });
+}
+
 function renderHand() {
   const g = state.game;
   if (!g) return;
   const handEl = document.getElementById("your-hand");
-  const myHand = g.yourHand || [];
+  const myHand = _sortHand(g.yourHand || []);
   const topCard = g.topCard ? parseCard(g.topCard) : null;
   const currentColor = g.currentColor;
   const isMyTurn = g.isYourTurn && g.phase === "playing";
