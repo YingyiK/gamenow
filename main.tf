@@ -112,6 +112,54 @@ resource "aws_s3_object" "frontend_battleship_html" {
   content_type = "text/html; charset=utf-8"
 }
 
+resource "aws_s3_object" "frontend_chess_html" {
+  bucket       = aws_s3_bucket.frontend.id
+  key          = "chess.html"
+  source       = "${path.module}/frontend/chess.html"
+  etag         = filemd5("${path.module}/frontend/chess.html")
+  content_type = "text/html; charset=utf-8"
+}
+
+resource "aws_s3_object" "frontend_gomoku_html" {
+  bucket       = aws_s3_bucket.frontend.id
+  key          = "gomoku.html"
+  source       = "${path.module}/frontend/gomoku.html"
+  etag         = filemd5("${path.module}/frontend/gomoku.html")
+  content_type = "text/html; charset=utf-8"
+}
+
+resource "aws_cloudfront_function" "chess_rewrite" {
+  name    = "${var.project}-chess-rewrite"
+  runtime = "cloudfront-js-1.0"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+      var request = event.request;
+      var uri = request.uri;
+      if (!uri.match(/\.(js|css|png|ico|jpg|jpeg|gif|svg|woff|woff2)$/)) {
+        request.uri = '/chess.html';
+      }
+      return request;
+    }
+  EOT
+}
+
+resource "aws_cloudfront_function" "gomoku_rewrite" {
+  name    = "${var.project}-gomoku-rewrite"
+  runtime = "cloudfront-js-1.0"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+      var request = event.request;
+      var uri = request.uri;
+      if (!uri.match(/\.(js|css|png|ico|jpg|jpeg|gif|svg|woff|woff2)$/)) {
+        request.uri = '/gomoku.html';
+      }
+      return request;
+    }
+  EOT
+}
+
 resource "aws_cloudfront_function" "uno_rewrite" {
   name    = "${var.project}-uno-rewrite"
   runtime = "cloudfront-js-1.0"
@@ -182,6 +230,52 @@ resource "aws_cloudfront_distribution" "frontend" {
     default_ttl            = 300
     max_ttl                = 86400
     compress               = true
+  }
+
+  ordered_cache_behavior {
+    path_pattern     = "/chess*"
+    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "frontend-s3-origin"
+
+    forwarded_values {
+      query_string = false
+      cookies { forward = "none" }
+    }
+
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 0
+    default_ttl            = 300
+    max_ttl                = 86400
+    compress               = true
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.chess_rewrite.arn
+    }
+  }
+
+  ordered_cache_behavior {
+    path_pattern     = "/gomoku*"
+    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "frontend-s3-origin"
+
+    forwarded_values {
+      query_string = false
+      cookies { forward = "none" }
+    }
+
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 0
+    default_ttl            = 300
+    max_ttl                = 86400
+    compress               = true
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.gomoku_rewrite.arn
+    }
   }
 
   ordered_cache_behavior {
