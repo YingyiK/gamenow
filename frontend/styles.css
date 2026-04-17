@@ -1063,12 +1063,14 @@ button {
   flex-direction: column;
   gap: 12px;
   align-items: stretch;
+  justify-content: center;
 }
 
 @media (min-width: 700px) {
   .chess-layout {
     flex-direction: row;
     align-items: flex-start;
+    justify-content: center;
   }
 
   .chess-board-panel {
@@ -1099,8 +1101,12 @@ button {
   align-items: center;
   justify-content: center;
   font-size: clamp(14px, 5vw, 28px);
-  cursor: pointer;
+  cursor: default;
   position: relative;
+}
+
+.chess-cell[data-square] {
+  cursor: pointer;
 }
 
 .chess-cell.light { background: #f0d9b5; }
@@ -1209,12 +1215,14 @@ button {
   flex-direction: column;
   gap: 12px;
   align-items: stretch;
+  justify-content: center;
 }
 
 @media (min-width: 700px) {
   .gomoku-layout {
     flex-direction: row;
     align-items: flex-start;
+    justify-content: center;
   }
 
   .gomoku-board-panel {
@@ -1224,15 +1232,22 @@ button {
   .gomoku-sidebar {
     flex: 1 1 160px;
     min-width: 140px;
+    max-width: 360px;
   }
 }
 
 .gomoku-board {
   display: grid;
   grid-template-columns: repeat(15, 1fr);
-  gap: 2px;
+  gap: 0;
   padding: 10px;
-  background: #dcb471;
+  background-color: #dcb471;
+  background-image:
+    repeating-linear-gradient(rgba(100,60,0,0.55) 0px, rgba(100,60,0,0.55) 1px, transparent 1px, transparent 100%),
+    repeating-linear-gradient(90deg, rgba(100,60,0,0.55) 0px, rgba(100,60,0,0.55) 1px, transparent 1px, transparent 100%);
+  background-size: calc(100% / 15) calc(100% / 15);
+  background-position: calc(100% / 30) calc(100% / 30);
+  background-origin: content-box;
   border-radius: 6px;
   border: 3px solid #a0722a;
   width: min(480px, calc(100vw - 80px));
@@ -1242,7 +1257,6 @@ button {
 
 .gomoku-cell {
   aspect-ratio: 1;
-  border-radius: 50%;
   position: relative;
   display: flex;
   align-items: center;
@@ -1265,20 +1279,33 @@ button {
   border-radius: 50%;
   background: rgba(0,0,0,0.15);
   pointer-events: none;
+  z-index: 2;
 }
 
-.gomoku-cell.black-stone {
+.gomoku-cell.black-stone::before {
+  content: "";
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
   background: radial-gradient(circle at 38% 35%, #888, #111 70%);
   box-shadow: 1px 2px 3px rgba(0,0,0,0.5);
+  z-index: 1;
+  pointer-events: none;
 }
 
-.gomoku-cell.white-stone {
+.gomoku-cell.white-stone::before {
+  content: "";
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
   background: radial-gradient(circle at 38% 35%, #fff, #ccc 70%);
   border: 1px solid #aaa;
   box-shadow: 1px 2px 3px rgba(0,0,0,0.3);
+  z-index: 1;
+  pointer-events: none;
 }
 
-.gomoku-cell.winning-cell {
+.gomoku-cell.winning-cell::before {
   box-shadow: 0 0 0 3px rgba(255, 200, 0, 0.9) !important;
 }
 
