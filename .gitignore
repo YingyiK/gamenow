@@ -5,3 +5,4 @@ zips/
 mnt/
 lambdas/chess_service/chess/
 lambdas/chess_service/*.dist-info/
+.DS_Store
