@@ -642,6 +642,11 @@ async function refreshAll() {
   try {
     if (isViewingLiveRoom()) {
       await fetchRoom();
+      if (currentGameType() === "chess" && isHostPlayer() && hasAllPlayers() && isWaitingRoomStage()) {
+        await startRoom();
+        renderAll();
+        return;
+      }
       if (!isWaitingRoomStage()) {
         await fetchGame();
         if (currentGameType() === "gomoku" && state.game?.phase === "waiting_for_players" && !state.game?.yourReady) {
