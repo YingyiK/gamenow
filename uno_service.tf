@@ -511,3 +511,19 @@ resource "aws_api_gateway_deployment" "uno" {
   }
 }
 
+# ---------------------------------------------------------------------------
+# 自动把最新 deployment 关联到 prod stage
+# ---------------------------------------------------------------------------
+
+resource "null_resource" "update_stage" {
+  triggers = {
+    deployment_id = aws_api_gateway_deployment.uno.id
+  }
+
+  provisioner "local-exec" {
+    command = "aws apigateway update-stage --rest-api-id ${aws_api_gateway_rest_api.rest.id} --stage-name prod --patch-operations op=replace,path=/deploymentId,value=${aws_api_gateway_deployment.uno.id} --region us-west-2"
+  }
+
+  depends_on = [aws_api_gateway_deployment.uno]
+}
+
