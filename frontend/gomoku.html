@@ -129,10 +129,10 @@
                 <div id="gomoku-game-summary" class="stage-summary"></div>
               </article>
               <div class="gomoku-layout">
-                <article class="panel gomoku-board-panel">
+                <article class="panel gomoku-board-panel" id="gomoku-board-panel">
                   <div id="gomoku-board" class="gomoku-board"></div>
                 </article>
-                <article class="panel gomoku-sidebar">
+                <article class="panel gomoku-sidebar" id="gomoku-sidebar-panel">
                   <div id="gomoku-ready-section" class="hidden">
                     <p class="placement-hint">Both players click Ready to start. Black moves first.</p>
                     <div class="inline-actions centered-actions">
@@ -143,15 +143,15 @@
                     <div id="gomoku-color-label" class="chess-color-label"></div>
                     <div id="gomoku-move-list" class="chess-move-list"></div>
                   </div>
-                  <div id="gomoku-finished-section" class="hidden">
-                    <div id="gomoku-result-label" class="stage-summary-line"></div>
-                    <div class="inline-actions centered-actions" style="margin-top:10px">
-                      <button id="gomoku-forfeit-btn" class="ghost danger" type="button">Leave Game</button>
+                  <div id="gomoku-finished-section" class="hidden" style="text-align:center">
+                    <div id="gomoku-result-label" class="stage-summary-line" style="font-size:24px;font-weight:700;margin-bottom:16px"></div>
+                    <div class="inline-actions centered-actions">
+                      <button id="gomoku-forfeit-btn" class="primary-button" type="button">Leave Game</button>
                     </div>
                   </div>
                 </article>
               </div>
-              <div class="uno-chat-panel">
+              <div id="gomoku-chat-panel" class="uno-chat-panel">
                 <div id="chat-log" class="uno-chat-log"></div>
                 <div class="uno-chat-row">
                   <input id="chat-input" type="text" maxlength="300" placeholder="Send a message">
