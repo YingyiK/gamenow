@@ -1315,8 +1315,8 @@ function renderChessGame() {
       els.chessRoundPill.classList.add("hidden");
       els.chessGameSummary.innerHTML = "";
     }
-    els.chessBoardPanel.classList.add("hidden");
-    els.chessSidebarPanel.classList.add("hidden");
+    els.chessBoardPanel?.classList.add("hidden");
+    els.chessSidebarPanel?.classList.add("hidden");
     els.chessDrawOfferBanner.classList.add("hidden");
     els.chessBoard.classList.add("hidden");
     els.chessReadySection.classList.add("hidden");
@@ -1332,8 +1332,8 @@ function renderChessGame() {
     els.chessStatusTitle.textContent = "Starting...";
     els.chessRoundPill.classList.add("hidden");
     els.chessGameSummary.innerHTML = "";
-    els.chessBoardPanel.classList.add("hidden");
-    els.chessSidebarPanel.classList.add("hidden");
+    els.chessBoardPanel?.classList.add("hidden");
+    els.chessSidebarPanel?.classList.add("hidden");
     els.chessDrawOfferBanner.classList.add("hidden");
     els.chessBoard.classList.add("hidden");
     els.chessReadySection.classList.add("hidden");
@@ -1347,9 +1347,9 @@ function renderChessGame() {
     els.chessStatusTitle.textContent = game.yourTurn ? "Your turn" : "Opponent's turn";
     els.chessRoundPill.classList.add("hidden");
     els.chessGameSummary.innerHTML = "";
-    els.chessBoardPanel.classList.remove("hidden");
+    els.chessBoardPanel?.classList.remove("hidden");
     els.chessBoard.classList.remove("hidden");
-    els.chessSidebarPanel.classList.add("hidden");
+    els.chessSidebarPanel?.classList.add("hidden");
     els.chessReadySection.classList.add("hidden");
     els.chessPlaySection.classList.add("hidden");
     els.chessFinishedSection.classList.add("hidden");
@@ -1369,9 +1369,9 @@ function renderChessGame() {
     els.chessRoundPill.classList.add("hidden");
     els.chessGameSummary.innerHTML = "";
     els.chessResultLabel.textContent = gameResultText(game);
-    els.chessBoardPanel.classList.add("hidden");
+    els.chessBoardPanel?.classList.add("hidden");
     els.chessBoard.classList.add("hidden");
-    els.chessSidebarPanel.classList.remove("hidden");
+    els.chessSidebarPanel?.classList.remove("hidden");
     els.chessReadySection.classList.add("hidden");
     els.chessPlaySection.classList.add("hidden");
     els.chessFinishedSection.classList.remove("hidden");
