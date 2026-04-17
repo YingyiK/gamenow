@@ -143,8 +143,8 @@ def start_room(event, room_id):
         item = table.get_item(Key={"roomId": room_id}).get("Item")
         if not item:
             return response(404, {"error": "Room not found"})
-        if item.get("gameType") not in ("battleship", "chess"):
-            return response(400, {"error": "Only battleship and chess rooms support explicit start"})
+        if item.get("gameType") not in ("battleship", "chess", "gomoku"):
+            return response(400, {"error": "Only battleship, chess, and gomoku rooms support explicit start"})
         if item.get("status") != "waiting":
             return response(400, {"error": "Room has already started"})
 
