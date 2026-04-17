@@ -129,8 +129,15 @@
                 </div>
                 <div id="chess-game-summary" class="stage-summary"></div>
               </article>
+              <div id="chess-draw-offer-banner" class="chess-draw-offer hidden">
+                <p>Opponent offered a draw</p>
+                <div class="inline-actions centered-actions">
+                  <button id="chess-accept-draw" type="button">Accept</button>
+                  <button id="chess-decline-draw" class="ghost" type="button">Decline</button>
+                </div>
+              </div>
               <div class="chess-layout">
-                <article class="panel chess-board-panel">
+                <article class="panel chess-board-panel hidden" id="chess-board-panel">
                   <div id="chess-board" class="chess-board"></div>
                   <div id="chess-promotion-bar" class="chess-promotion-bar hidden">
                     <span>Promote to:</span>
@@ -140,30 +147,18 @@
                     <button data-promo="n" type="button" class="promo-btn">♘ Knight</button>
                   </div>
                 </article>
-                <article class="panel chess-sidebar">
+                <article class="panel chess-sidebar hidden" id="chess-sidebar-panel">
                   <div id="chess-ready-section" class="hidden">
-                    <p class="placement-hint">Both players must click Ready to start. Colors are assigned randomly.</p>
-                    <div class="inline-actions centered-actions">
-                      <button id="chess-ready-btn" type="button">I'm Ready</button>
-                    </div>
+                    <p class="placement-hint">Colors are assigned randomly. Game starts automatically.</p>
                   </div>
                   <div id="chess-play-section" class="hidden">
                     <div id="chess-color-label" class="chess-color-label"></div>
-                    <div id="chess-draw-offer-banner" class="chess-draw-offer hidden">
-                      <p>Opponent offered a draw</p>
-                      <div class="inline-actions centered-actions">
-                        <button id="chess-accept-draw" type="button">Accept</button>
-                        <button id="chess-decline-draw" class="ghost" type="button">Decline</button>
-                      </div>
-                    </div>
-                    <div id="chess-move-list" class="chess-move-list"></div>
-                    <div class="inline-actions centered-actions" style="margin-top:10px">
-                      <button id="chess-draw-btn" class="ghost" type="button">Offer Draw</button>
-                      <button id="chess-resign-btn" class="ghost danger" type="button">Resign</button>
-                    </div>
                   </div>
-                  <div id="chess-finished-section" class="hidden">
-                    <div id="chess-result-label" class="stage-summary-line"></div>
+                  <div id="chess-finished-section" class="hidden" style="text-align:center">
+                    <div id="chess-result-label" class="stage-summary-line" style="font-size:24px;font-weight:700;margin-bottom:16px"></div>
+                    <div class="inline-actions centered-actions">
+                      <button id="chess-leave-btn" class="primary-button" type="button">Leave Game</button>
+                    </div>
                   </div>
                 </article>
               </div>
